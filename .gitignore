@@ -1,0 +1,17 @@
+# macOS
+.DS_Store
+
+# Skript backup-lari (auto-update va build.gradle inject)
+*.bak
+*.bak.*
+*.new.*
+*.tmp.*
+
+# IDE / editor
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Claude Code session data
+.claude/
