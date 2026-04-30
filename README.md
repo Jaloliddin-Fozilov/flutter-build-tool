@@ -2,6 +2,32 @@
 
 Flutter loyihalari uchun universal interaktiv build skripti. Versiya boshqaruvi, AAB/APK formatlari, Android signing avtomatik sozlash, va auto-update bilan.
 
+## Tezkor boshlash (bitta buyruq)
+
+Flutter loyihasi ildizidan ishga tushiring — yuklab oladi, ruxsat beradi va darrov interaktiv menyu ochadi:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Jaloliddin-Fozilov/flutter-build-tool/main/flutter_build.sh -o flutter_build.sh && chmod +x flutter_build.sh && ./flutter_build.sh
+```
+
+Faqat yuklab olib, keyin ishga tushirmoqchi bo'lsangiz:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Jaloliddin-Fozilov/flutter-build-tool/main/flutter_build.sh -o flutter_build.sh && chmod +x flutter_build.sh
+```
+
+Global o'rnatish (har qaysi loyihadan `flutter-build` deb chaqirish uchun):
+
+```bash
+sudo curl -fsSL https://raw.githubusercontent.com/Jaloliddin-Fozilov/flutter-build-tool/main/flutter_build.sh -o /usr/local/bin/flutter-build && sudo chmod +x /usr/local/bin/flutter-build
+```
+
+Keyin xohlagan Flutter loyihasidan:
+
+```bash
+flutter-build
+```
+
 ## Imkoniyatlar
 
 - **Interaktiv UI** — strelkalar bilan boshqariladigan checkbox menyu
@@ -13,16 +39,7 @@ Flutter loyihalari uchun universal interaktiv build skripti. Versiya boshqaruvi,
 - **Auto-update** — har ishga tushganda yangilanish tekshiriladi
 - **Finder integratsiyasi** — build natijalari avtomatik ochiladi
 
-## O'rnatish
-
-### Tez o'rnatish (curl)
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/Jaloliddin-Fozilov/flutter-build-tool/main/flutter_build.sh -o flutter_build.sh
-chmod +x flutter_build.sh
-```
-
-### Qo'lda o'rnatish
+## Manbadan o'rnatish (kontribyutorlar uchun)
 
 ```bash
 git clone https://github.com/Jaloliddin-Fozilov/flutter-build-tool.git
@@ -36,6 +53,12 @@ Skriptni Flutter loyihasi ildizidan ishga tushiring:
 
 ```bash
 ./flutter_build.sh
+```
+
+Yoki global o'rnatilgan bo'lsa:
+
+```bash
+flutter-build
 ```
 
 ### Bayroqlar
