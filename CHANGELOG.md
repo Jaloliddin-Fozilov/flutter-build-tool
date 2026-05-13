@@ -5,6 +5,29 @@ Loyihaning barcha muhim o'zgarishlari shu faylga yoziladi.
 Format [Keep a Changelog](https://keepachangelog.com/uz/1.1.0/) asosida,
 versiyalash esa [Semantic Versioning](https://semver.org/lang/uz/) qoidasiga rioya qiladi.
 
+## [1.2.0] — 2026-05-14
+
+### Qo'shildi
+
+- **iOS App Store Connect upload** — `xcrun altool` orqali avtomatik upload.
+  Transporter app'idagi qo'lda upload jarayonini almashtiradi.
+  - Yangi menu opsiyasi: `[ ] App Store Connect upload (Production + iOS bilan)`
+  - API Key sozlamasi `~/.config/flutter-build-tool/app_store_connect.json` ga
+    saqlanadi (`chmod 600`), `.p8` fayl xavfsiz `~/.appstoreconnect/private_keys/`
+    ostida turadi.
+  - Birinchi marta ishlatishda interaktiv setup: Key ID, Issuer ID, `.p8` yo'li.
+  - `ios/ExportOptions.plist` yo'q bo'lsa, Team ID kiritib avtomatik yaratiladi.
+  - iOS Production build endi `--export-options-plist` flag bilan ishga tushadi
+    (faqat upload yoqilgan paytda).
+  - Xato holatlari uchun foydali ko'rsatmalar (Bundle ID, signing, versiya
+    konflikti, Team ID).
+
+### Talablar
+
+- `xcrun` (Xcode Command Line Tools) — App Store upload uchun.
+- App Store Connect API Key (.p8 fayl) — Apple Developer hisobida yaratiladi.
+- `ios/ExportOptions.plist` — yo'q bo'lsa skript yaratib beradi.
+
 ## [1.1.0] — 2026-05-14
 
 ### Qo'shildi
@@ -48,5 +71,6 @@ versiyalash esa [Semantic Versioning](https://semver.org/lang/uz/) qoidasiga rio
 - AAB va APK formatlari, Production va Debug rejimlari.
 - Build natijalarini Finder'da avtomatik ochish.
 
+[1.2.0]: https://github.com/Jaloliddin-Fozilov/flutter-build-tool/releases/tag/v1.2.0
 [1.1.0]: https://github.com/Jaloliddin-Fozilov/flutter-build-tool/releases/tag/v1.1.0
 [1.0.0]: https://github.com/Jaloliddin-Fozilov/flutter-build-tool/releases/tag/v1.0.0
