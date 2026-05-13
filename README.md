@@ -37,7 +37,7 @@ flutter-build
 - **Debug yoki Production** rejimlar
 - **Android signing** — keystore yaratish, mavjud keystoreni ulash, `key.properties` va `build.gradle` avtomatik sozlash (eski keystore xavfsiz backup qilinadi)
 - **Auto-update** — har ishga tushganda yangilanish tekshiriladi
-- **Finder integratsiyasi** — build natijalari avtomatik ochiladi
+- **Cross-platform ochish** — build natijalari macOS (`open`), Linux (`xdg-open`), WSL (`explorer.exe`) da avtomatik ochiladi
 
 ## Manbadan o'rnatish (kontribyutorlar uchun)
 
@@ -71,11 +71,12 @@ flutter-build
 
 ## Talablar
 
-- **macOS** yoki **Linux** (iOS build faqat macOS)
+- **macOS**, **Linux**, yoki **WSL** (iOS build faqat macOS)
 - **Flutter SDK** (PATH da)
 - **Java JDK** (Android signing uchun, `keytool` kerak)
-- **Bash 4+** (macOS standart bash 3.2 bilan ham ishlaydi)
+- **Bash 3.2+** (macOS standart bash 3.2 ham qo'llab-quvvatlanadi)
 - **curl** (auto-update uchun, ixtiyoriy)
+- **xdg-open** Linux uchun, **explorer.exe** WSL uchun (build natijalarini ochish uchun)
 
 ## Ishlash jarayoni
 
@@ -96,7 +97,7 @@ flutter-build
    - Joriy keystoreni ko'rsatish
    - Debug signing bilan davom etish
 8. **Build** — APK / AAB / IPA
-9. **Finder da ochish**
+9. **Natijalarni ochish** — macOS Finder, Linux file manager yoki WSL Explorer
 
 ## Android signing avtomatlashtirish
 

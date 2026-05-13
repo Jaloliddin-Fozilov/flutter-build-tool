@@ -50,6 +50,35 @@ warn() { echo -e "  ${YELLOW}⚠${NC} $1"; }
 err()  { echo -e "  ${RED}✗${NC} $1"; }
 info() { echo -e "  ${CYAN}ℹ${NC} $1"; }
 
+# ─── Umumiy yordamchilar ──────────────────────────────────
+
+# open_file <path>
+#   macOS: open, Linux: xdg-open, WSL: explorer.exe, aks holda — path ni ko'rsatadi
+open_file() {
+  local path="$1"
+  if [ ! -d "$path" ] && [ ! -f "$path" ]; then
+    warn "Topilmadi: $path"
+    return 1
+  fi
+  if command -v open >/dev/null 2>&1; then
+    open "$path" 2>/dev/null && { ok "Ochildi: $path"; return 0; }
+  fi
+  if command -v xdg-open >/dev/null 2>&1; then
+    (xdg-open "$path" >/dev/null 2>&1 &) && { ok "Ochildi (xdg-open): $path"; return 0; }
+  fi
+  if command -v explorer.exe >/dev/null 2>&1; then
+    local winpath
+    if command -v wslpath >/dev/null 2>&1; then
+      winpath=$(wslpath -w "$path" 2>/dev/null || echo "$path")
+    else
+      winpath="$path"
+    fi
+    explorer.exe "$winpath" 2>/dev/null && { ok "Ochildi (explorer): $path"; return 0; }
+  fi
+  info "Yo'l: $path (qo'lda oching)"
+  return 1
+}
+
 # ─── Auto-update tekshiruvi ───────────────────────────────
 check_for_update() {
   command -v curl > /dev/null 2>&1 || return 0
@@ -924,15 +953,10 @@ if $BUILD_IOS; then
   ok "iOS build muvaffaqiyatli"
 fi
 
-# ─── 10. Finder ───────────────────────────────────────────
-step "Build natijalarini Finder da ochish"
+# ─── 10. Build natijalarini ochish (macOS/Linux/WSL) ──────
+step "Build natijalarini ochish"
 for path in "${BUILD_PATHS[@]}"; do
-  if [ -d "$path" ]; then
-    open "$path"
-    ok "Ochildi: $path"
-  else
-    warn "Topilmadi: $path"
-  fi
+  open_file "$path" || true
 done
 
 banner "Hammasi tayyor! Versiya: ${new_pname}+${new_pbuild}"
