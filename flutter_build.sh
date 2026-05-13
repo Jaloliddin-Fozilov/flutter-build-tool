@@ -79,6 +79,77 @@ resolve_version_input() {
   printf '%s\n' "$input"
 }
 
+# open_url <url>
+#   Brauzerda URL ochish — open_file bilan bir xil platform fallback
+open_url() {
+  local url="$1"
+  if command -v open > /dev/null 2>&1; then
+    open "$url" > /dev/null 2>&1 && return 0
+  fi
+  if command -v xdg-open > /dev/null 2>&1; then
+    (xdg-open "$url" > /dev/null 2>&1 &) && return 0
+  fi
+  if command -v explorer.exe > /dev/null 2>&1; then
+    explorer.exe "$url" > /dev/null 2>&1 && return 0
+  fi
+  info "Brauzerda oching: $url"
+  return 1
+}
+
+# Clipboard'dan o'qish (macOS pbpaste, Linux xclip/xsel)
+read_clipboard() {
+  if command -v pbpaste > /dev/null 2>&1; then
+    pbpaste 2>/dev/null
+  elif command -v xclip > /dev/null 2>&1; then
+    xclip -o -selection clipboard 2>/dev/null
+  elif command -v xsel > /dev/null 2>&1; then
+    xsel -b 2>/dev/null
+  fi
+}
+
+# Downloads papkasida yangi yuklangan fayl uchun kutish (polling + spinner)
+# wait_for_download <pattern> <marker_file> [timeout_sec]
+#   pattern: find -name argumenti (masalan "AuthKey_*.p8")
+#   marker_file: shu vaqtdan keyin yaratilgan fayllarni qidiradi
+#   timeout: default 60s
+# Natija stdout'ga, diagnostika stderr ga.
+wait_for_download() {
+  local pattern="$1" marker="$2" timeout="${3:-60}"
+  local downloads="${HOME}/Downloads"
+  local elapsed=0
+  local spinner_chars='⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏'
+  local spinner_i=0
+
+  if [ ! -d "$downloads" ]; then
+    err "Downloads papkasi topilmadi: $downloads" >&2
+    return 1
+  fi
+
+  while [ "$elapsed" -lt "$timeout" ]; do
+    local found
+    found=$(find "$downloads" -maxdepth 1 -name "$pattern" \
+      -newer "$marker" 2>/dev/null | head -1)
+
+    if [ -n "$found" ]; then
+      printf "\r  ${GREEN}✓${NC} Topildi: %s%30s\n" "$found" " " >&2
+      printf '%s\n' "$found"
+      return 0
+    fi
+
+    local char="${spinner_chars:$spinner_i:1}"
+    printf "\r  ${CYAN}%s${NC} Yuklab olishni kutmoqda... (%ds / %ds)" \
+      "$char" "$elapsed" "$timeout" >&2
+    spinner_i=$(( (spinner_i + 1) % 10 ))
+
+    sleep 1
+    elapsed=$((elapsed + 1))
+  done
+
+  echo >&2
+  warn "Timeout (${timeout}s) — fayl Downloads'da topilmadi" >&2
+  return 1
+}
+
 # open_file <path>
 #   macOS: open, Linux: xdg-open, WSL: explorer.exe, aks holda — path ni ko'rsatadi
 open_file() {
@@ -791,6 +862,101 @@ JSON
 }
 
 # Konfiguratsiyani ta'minlash — mavjud bo'lsa tekshiradi, yo'q bo'lsa sozlashni taklif qiladi
+# Avtomatik wizard — brauzerni ochib, fayl yuklanishini kutib, avtomatik sozlash
+appstore_setup_wizard() {
+  step "App Store Connect avtomatik sozlash"
+  echo
+
+  # [1/3] Brauzerda API Keys sahifasi ochish
+  info "─ [1/3] App Store Connect API Key yarating ───────────"
+  info "Brauzerda App Store Connect ochiladi..."
+  echo
+  info "Sahifada:"
+  info "  1) ${BOLD}Generate API Key${NC} tugmasini bosing"
+  info "  2) Name: ${BOLD}flutter-build-deploy${NC}"
+  info "  3) Access: ${BOLD}App Manager${NC} (yoki ${BOLD}Developer${NC})"
+  info "  4) ${BOLD}Generate${NC} → '.p8' fayl avtomatik yuklab olinadi"
+  echo
+
+  local marker="/tmp/.fbt_appstore.$$"
+  touch "$marker"
+  open_url "https://appstoreconnect.apple.com/access/integrations/api"
+  echo
+
+  # [2/3] .p8 faylni topish (polling)
+  info "─ [2/3] .p8 faylni topyapmiz ─────────────────────────"
+  local p8_file
+  p8_file=$(wait_for_download "AuthKey_*.p8" "$marker" 90 || true)
+  rm -f "$marker"
+
+  if [ -z "$p8_file" ] || [ ! -f "$p8_file" ]; then
+    warn ".p8 fayl avtomatik topilmadi"
+    read -p "  Fayl yo'lini qo'lda kiriting (yoki Enter — bekor): " p8_file
+    p8_file="${p8_file/#\~/$HOME}"
+    [ -z "$p8_file" ] && { warn "Bekor qilindi"; return 1; }
+    [ ! -f "$p8_file" ] && { err "Fayl topilmadi: $p8_file"; return 1; }
+  fi
+
+  # Fayl nomidan Key ID ni chiqarish: AuthKey_AB12CD34.p8 → AB12CD34
+  local key_id
+  key_id=$(basename "$p8_file" | sed -E 's/^AuthKey_(.*)\.p8$/\1/')
+  ok "Key ID aniqlandi: ${BOLD}${key_id}${NC}"
+
+  # Apple konvensiyasi: ~/.appstoreconnect/private_keys/
+  local target_dir="${HOME}/.appstoreconnect/private_keys"
+  mkdir -p "$target_dir"
+  chmod 700 "$target_dir"
+  local target_path="${target_dir}/$(basename "$p8_file")"
+  if [ "$p8_file" != "$target_path" ]; then
+    mv "$p8_file" "$target_path"
+    chmod 600 "$target_path"
+    ok "Apple konvensiyasi yo'liga ko'chirildi: $target_path"
+  fi
+
+  # [3/3] Issuer ID — clipboard'dan auto-detect yoki qo'lda
+  echo
+  info "─ [3/3] Issuer ID ─────────────────────────────────────"
+  info "Yuqorida ochilgan sahifaning ${BOLD}yuqori chap${NC} burchagida 'Issuer ID' bor"
+  info "UUID format: 12345678-1234-1234-1234-123456789abc"
+  echo
+
+  local issuer_id clip
+  clip=$(read_clipboard)
+  if [[ "$clip" =~ ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$ ]]; then
+    info "Clipboard'da UUID topildi: ${YELLOW}${clip}${NC}"
+    read -p "  Shu UUID ni Issuer ID sifatida ishlatamizmi? (y/n) [y]: " confirm
+    if [[ ! "$confirm" =~ ^[Nn]$ ]]; then
+      issuer_id="$clip"
+    fi
+  fi
+
+  if [ -z "$issuer_id" ]; then
+    read -p "    Issuer ID: " issuer_id
+  fi
+
+  if [[ ! "$issuer_id" =~ ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$ ]]; then
+    warn "UUID formatga to'g'ri kelmadi — shu bilan davom etamiz (xato bo'lsa qayta sozlang)"
+  fi
+
+  # Sozlamalarni saqlash
+  local dir cfg
+  dir=$(appstore_config_dir)
+  mkdir -p "$dir"
+  chmod 700 "$dir"
+  cfg=$(appstore_config_file)
+  cat > "$cfg" <<JSON
+{
+  "key_id": "${key_id}",
+  "issuer_id": "${issuer_id}",
+  "key_path": "${target_path}"
+}
+JSON
+  chmod 600 "$cfg"
+
+  echo
+  ok "App Store Connect sozlandi: $cfg"
+}
+
 ensure_appstore_credentials() {
   local cfg kid iid kp
   cfg=$(appstore_config_file)
@@ -817,12 +983,18 @@ ensure_appstore_credentials() {
     fi
   else
     info "App Store Connect API hali sozlanmagan"
-    read -p "  Hozir sozlaymizmi? (y/n): " setup_now
-    if [[ "$setup_now" =~ ^[Yy]$ ]]; then
-      setup_appstore_credentials || return 1
-    else
-      return 1
-    fi
+    echo
+    echo -e "  ${BOLD}Sozlash usulini tanlang:${NC}"
+    echo -e "    ${CYAN}1${NC}) Avtomatik wizard ${GREEN}(tavsiya)${NC} — brauzer ochiladi, .p8 fayl avtomatik aniqlanadi"
+    echo -e "    ${CYAN}2${NC}) Qo'lda kiritish — Key ID, Issuer ID va .p8 yo'lini siz yozasiz"
+    echo -e "    ${CYAN}3${NC}) Bekor qilish"
+    echo
+    read -p "  Tanlang [1-3]: " choice
+    case "$choice" in
+      1|"") appstore_setup_wizard || return 1 ;;
+      2)    setup_appstore_credentials || return 1 ;;
+      *)    return 1 ;;
+    esac
   fi
 }
 
@@ -1170,6 +1342,155 @@ JSON
 }
 
 # Sozlamalar mavjudligini ta'minlash
+# Avtomatik wizard — brauzerni ochib, JSON faylni avtomatik aniqlab, sozlash
+playstore_setup_wizard() {
+  step "Google Play API avtomatik sozlash"
+  echo
+
+  # [1/4] API yoqish
+  info "─ [1/4] Google Play Android Developer API ni yoqing ──"
+  info "Brauzerda Cloud Console API library ochiladi..."
+  echo
+  info "Sahifada: ${BOLD}Enable${NC} tugmasini bosing (allaqachon yoqilgan bo'lsa shunday qoldiring)"
+  echo
+
+  open_url "https://console.cloud.google.com/apis/library/androidpublisher.googleapis.com"
+  read -p "  Yoqilgandan keyin Enter bosing: " _
+
+  # [2/4] Service Account yaratish
+  echo
+  info "─ [2/4] Service Account yarating ─────────────────────"
+  info "Brauzerda Service Accounts sahifasi ochiladi..."
+  echo
+  info "Sahifada:"
+  info "  1) ${BOLD}+ Create Service Account${NC} tugmasini bosing"
+  info "  2) Name: ${BOLD}flutter-build-deploy${NC}"
+  info "  3) Description: ixtiyoriy"
+  info "  4) ${BOLD}Create and Continue${NC}"
+  info "  5) 'Grant access' qadamini ${BOLD}skip${NC} qiling (Done bosing)"
+  echo
+
+  open_url "https://console.cloud.google.com/iam-admin/serviceaccounts"
+  read -p "  Yaratganingizdan keyin Enter bosing: " _
+
+  # [3/4] JSON Key yuklab olish
+  echo
+  info "─ [3/4] JSON Key yuklab oling ────────────────────────"
+  info "Yaratilgan Service Account'ga kiring:"
+  info "  1) ${BOLD}Keys${NC} tab → ${BOLD}Add Key${NC} → ${BOLD}Create new key${NC}"
+  info "  2) ${BOLD}JSON${NC} tanlang → ${BOLD}Create${NC}"
+  info "  3) Fayl avtomatik Downloads'ga yuklanadi"
+  echo
+
+  local marker="/tmp/.fbt_play.$$"
+  touch "$marker"
+
+  read -p "  Tayyor bo'lsangiz Enter bosing: " _
+  echo
+
+  # JSON faylni topish — Service Account marker bilan
+  local sa_candidate sa_file
+  local found_count=0
+  for sa_candidate in $(find "$HOME/Downloads" -maxdepth 1 -name "*.json" \
+      -newer "$marker" 2>/dev/null); do
+    if grep -q '"type": "service_account"' "$sa_candidate" 2>/dev/null; then
+      sa_file="$sa_candidate"
+      found_count=$((found_count + 1))
+    fi
+  done
+  rm -f "$marker"
+
+  if [ -z "$sa_file" ]; then
+    warn "Service Account JSON Downloads'da topilmadi"
+    info "Faylni qo'lda ko'rsating yoki bekor qiling"
+    read -p "  Fayl yo'li (Enter — bekor): " sa_file
+    sa_file="${sa_file/#\~/$HOME}"
+    [ -z "$sa_file" ] && { warn "Bekor qilindi"; return 1; }
+    [ ! -f "$sa_file" ] && { err "Fayl topilmadi: $sa_file"; return 1; }
+  fi
+
+  # JSON dan info chiqarish
+  local client_email project_id
+  client_email=$(sa_json_get_simple "$sa_file" "client_email")
+  project_id=$(sa_json_get_simple "$sa_file" "project_id")
+
+  if [[ ! "$client_email" =~ \.iam\.gserviceaccount\.com$ ]]; then
+    err "Bu Service Account JSON ko'rinmaydi: $sa_file"
+    return 1
+  fi
+
+  ok "JSON aniqlandi: $(basename "$sa_file")"
+  ok "Service Account: ${BOLD}${client_email}${NC}"
+  ok "Project: ${BOLD}${project_id}${NC}"
+
+  # Standart joyga ko'chirish
+  local target="${HOME}/.config/flutter-build-tool/play_store_key.json"
+  mkdir -p "$(dirname "$target")"
+  chmod 700 "$(dirname "$target")"
+  if [ "$sa_file" != "$target" ]; then
+    mv "$sa_file" "$target"
+    chmod 600 "$target"
+    ok "Ko'chirildi: $target (chmod 600)"
+  fi
+
+  # [4/4] Play Console ruxsatlari
+  echo
+  info "─ [4/4] Play Console ruxsatlari ──────────────────────"
+  info "Brauzerda Play Console API access sahifasi ochiladi..."
+  echo
+  info "Sahifada:"
+  info "  1) ${BOLD}${client_email}${NC} Service Account ro'yxatda paydo bo'lishi kerak"
+  info "  2) ${BOLD}Grant access${NC} ni bosing"
+  info "  3) ${BOLD}App permissions${NC}: faqat sizning app'ingizni tanlang"
+  info "  4) ${BOLD}Account permissions${NC}:"
+  info "       ✓ Releases — Release apps to testing tracks"
+  info "       ✓ Releases — Release to production..."
+  info "       ✓ Store presence — View app information..."
+  info "  5) ${BOLD}Apply${NC} ni bosing"
+  echo
+
+  open_url "https://play.google.com/console/u/0/api-access"
+  read -p "  Apply qilganingizdan keyin Enter bosing: " _
+
+  # Package name va track
+  echo
+  info "─ Sozlamalar ──────────────────────────────────────────"
+  local default_pkg track
+  default_pkg=$(detect_android_package_name)
+  if [ -n "$default_pkg" ]; then
+    ok "Package name aniqlandi: ${BOLD}${default_pkg}${NC}"
+  fi
+  read -p "    Package name [${default_pkg}]: " package_name
+  package_name="${package_name:-$default_pkg}"
+
+  if [ -z "$package_name" ]; then
+    err "Package name bo'sh bo'lishi mumkin emas"
+    return 1
+  fi
+
+  info "Track'lar: internal (eng tezkor), alpha, beta, production"
+  read -p "    Default track [internal]: " track
+  track="${track:-internal}"
+
+  # Saqlash
+  local dir cfg
+  dir=$(play_config_dir)
+  mkdir -p "$dir"
+  chmod 700 "$dir"
+  cfg=$(play_config_file)
+  cat > "$cfg" <<JSON
+{
+  "service_account_path": "${target}",
+  "package_name": "${package_name}",
+  "track": "${track}"
+}
+JSON
+  chmod 600 "$cfg"
+
+  echo
+  ok "Play Store sozlandi: $cfg"
+}
+
 ensure_play_credentials() {
   local cfg
   cfg=$(play_config_file)
@@ -1195,12 +1516,18 @@ ensure_play_credentials() {
     fi
   else
     info "Play Store sozlanmagan"
-    read -p "  Hozir sozlaymizmi? (y/n): " setup_now
-    if [[ "$setup_now" =~ ^[Yy]$ ]]; then
-      setup_play_credentials || return 1
-    else
-      return 1
-    fi
+    echo
+    echo -e "  ${BOLD}Sozlash usulini tanlang:${NC}"
+    echo -e "    ${CYAN}1${NC}) Avtomatik wizard ${GREEN}(tavsiya)${NC} — brauzer ochiladi, JSON Key avtomatik aniqlanadi"
+    echo -e "    ${CYAN}2${NC}) Qo'lda kiritish — JSON yo'lini siz yozasiz"
+    echo -e "    ${CYAN}3${NC}) Bekor qilish"
+    echo
+    read -p "  Tanlang [1-3]: " choice
+    case "$choice" in
+      1|"") playstore_setup_wizard || return 1 ;;
+      2)    setup_play_credentials || return 1 ;;
+      *)    return 1 ;;
+    esac
   fi
 }
 

@@ -39,6 +39,7 @@ flutter-build
 - **Android signing** — keystore yaratish, mavjud keystoreni ulash, `key.properties` va `build.gradle` avtomatik sozlash (eski keystore xavfsiz backup qilinadi)
 - **iOS App Store upload** — `xcrun altool` orqali avtomatik TestFlight/App Store deploy (Transporter app'iga muqobil)
 - **Android Play Store upload** — Google Play Developer API ga to'g'ridan-to'g'ri (Ruby, Python, Node — hech narsa kerak emas; pure bash + openssl)
+- **Avtomatik sozlash wizard'lari** — brauzer ochiladi, key fayllari Downloads'dan avtomatik aniqlanadi, sozlash bir necha clickda tugaydi (Key ID, Issuer ID, JSON yo'l — barchasi auto-detect)
 - **Auto-update** — har ishga tushganda yangilanish tekshiriladi
 - **Cross-platform ochish** — build natijalari macOS (`open`), Linux (`xdg-open`), WSL (`explorer.exe`) da avtomatik ochiladi
 
@@ -113,7 +114,44 @@ Skript Play Console'dagi qo'lda AAB upload jarayonini avtomatlashtiradi. Triple-
 
 Menu'da `Play Store upload` checkbox'ini yoqing — Production + Android + AAB bilan birga ishlatiladi.
 
-### Birinchi marta sozlash
+### Avtomatik sozlash wizard'i (tavsiya etiladi)
+
+Birinchi marta ishga tushirganingizda, skript sizdan **wizard** yoki **qo'lda** kiritishni tanlashni so'raydi. Wizard tanlasangiz:
+
+```
+▶ Google Play API avtomatik sozlash
+
+[1/4] Google Play Android Developer API ni yoqing
+  🌐 Brauzerda Cloud Console API library ochiladi
+  ℹ "Enable" tugmasini bosing
+  → Yoqilgandan keyin Enter bosing
+
+[2/4] Service Account yarating
+  🌐 Brauzerda Service Accounts sahifasi ochiladi
+  ℹ + Create Service Account → Name: flutter-build-deploy → Done
+  → Yaratganingizdan keyin Enter bosing
+
+[3/4] JSON Key yuklab oling
+  ℹ Keys → Add Key → Create new key → JSON → Create
+  ⠋ Yuklab olishni kutmoqda... (3s / 90s)
+  ✓ JSON aniqlandi: my-project-abc123.json
+  ✓ Service Account: flutter-build-deploy@my-project.iam.gserviceaccount.com
+  ✓ Project: my-project-123456
+  ✓ Ko'chirildi: ~/.config/flutter-build-tool/play_store_key.json
+
+[4/4] Play Console ruxsatlari
+  🌐 Brauzerda Play Console API access sahifasi ochiladi
+  ℹ Grant access → Releases ruxsatlari → Apply
+  → Apply qilganingizdan keyin Enter bosing
+
+✓ Sozlandi!
+```
+
+Hech qanday yo'lni qo'lda yozish kerak emas — skript brauzerni ochadi, Downloads'dan faylni topadi, JSON ichidagi `client_email`, `project_id` ni avtomatik o'qiydi.
+
+### Qo'lda sozlash (advanced)
+
+Agar wizard ishlamasa yoki o'zingiz bosqichlarni nazorat qilmoqchi bo'lsangiz:
 
 #### 1) Google Cloud Service Account yaratish
 
