@@ -19,7 +19,7 @@
 #  License: MIT
 # ════════════════════════════════════════════════════════════════
 
-set -e
+set -eo pipefail
 
 # ─── Skript ma'lumotlari ──────────────────────────────────
 SCRIPT_VERSION="1.0.0"
@@ -55,7 +55,7 @@ check_for_update() {
   command -v curl > /dev/null 2>&1 || return 0
 
   local latest
-  latest=$(curl -fsSL --max-time 3 "$SCRIPT_RAW_URL" 2>/dev/null \
+  latest=$(curl -fsSL --max-time 5 "$SCRIPT_RAW_URL" 2>/dev/null \
     | grep '^SCRIPT_VERSION=' | head -1 \
     | sed -E 's/SCRIPT_VERSION="?([^"]+)"?/\1/')
 
@@ -370,9 +370,12 @@ create_new_keystore() {
 
   if [ -f "$kpath" ]; then
     warn "Bu fayl allaqachon mavjud: $kpath"
-    read -p "    Qayta yozamizmi? (y/n): " ovw
+    warn "MUHIM: Keystore yo'qolsa, Play Store da ilovani yangilab bo'lmaydi."
+    read -p "    Eski keystore backup qilinib, yangisi yaratilsinmi? (y/n): " ovw
     [[ ! "${ovw}" =~ ^[Yy]$ ]] && { warn "Bekor qilindi"; return 1; }
-    rm -f "$kpath"
+    local backup_path="${kpath}.bak.$(date +%s)"
+    mv "$kpath" "$backup_path"
+    ok "Eski keystore backup qilindi: $backup_path"
   fi
 
   mkdir -p "$kdir"
@@ -660,13 +663,13 @@ if ! command -v flutter &> /dev/null; then
   exit 1
 fi
 
-PROJECT_NAME=$(grep "^name:" pubspec.yaml | head -1 | sed 's/name://' | tr -d ' ')
+PROJECT_NAME=$(awk -F: '/^name:/{v=$2; sub(/#.*/,"",v); gsub(/[" ]/,"",v); print v; exit}' pubspec.yaml)
 banner "Flutter Build Tool — ${PROJECT_NAME}"
 
 # ─── 1. Hozirgi versiyalarni o'qish ───────────────────────
 step "Hozirgi versiyalar o'qilmoqda"
 
-PUBSPEC_LINE=$(grep "^version:" pubspec.yaml | head -1 | sed 's/version://; s/[" ]//g')
+PUBSPEC_LINE=$(awk '/^version:/{v=$0; sub(/^version:[[:space:]]*/,"",v); sub(/#.*/,"",v); gsub(/[" ]/,"",v); print v; exit}' pubspec.yaml)
 PUBSPEC_NAME="${PUBSPEC_LINE%+*}"
 PUBSPEC_BUILD="${PUBSPEC_LINE#*+}"
 [ "$PUBSPEC_NAME" = "$PUBSPEC_BUILD" ] && PUBSPEC_BUILD="1"

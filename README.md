@@ -35,7 +35,7 @@ flutter-build
 - **Platforma tanlash** — Android va iOS ni alohida yoki birga build qilish
 - **Format tanlash** — AAB (Play Store), APK (sideload), yoki ikkalasi
 - **Debug yoki Production** rejimlar
-- **Android signing** — keystore yaratish, mavjud keystoreni ulash, `key.properties` va `build.gradle` avtomatik sozlash
+- **Android signing** — keystore yaratish, mavjud keystoreni ulash, `key.properties` va `build.gradle` avtomatik sozlash (eski keystore xavfsiz backup qilinadi)
 - **Auto-update** — har ishga tushganda yangilanish tekshiriladi
 - **Finder integratsiyasi** — build natijalari avtomatik ochiladi
 
