@@ -32,6 +32,7 @@ flutter-build
 
 - **Interaktiv UI** — strelkalar bilan boshqariladigan checkbox menyu
 - **Versiya boshqaruvi** — `pubspec.yaml`, iOS `project.pbxproj`, Android `build.gradle` ni avtomatik sinxronlaydi
+- **`+` qisqartmasi** — versiya yoki build kiritishda `+` bossangiz, oxirgi raqam +1 ga oshadi (`1.0.23` → `1.0.24`, `34` → `35`)
 - **Platforma tanlash** — Android va iOS ni alohida yoki birga build qilish
 - **Format tanlash** — AAB (Play Store), APK (sideload), yoki ikkalasi
 - **Debug yoki Production** rejimlar
@@ -88,7 +89,10 @@ flutter-build
 3. **Android format** (Android tanlangan bo'lsa):
    - AAB (Play Store)
    - APK (sideload, test)
-4. **Yangi versiyalarni kiritish** (Enter — eskini saqlash)
+4. **Yangi versiyalarni kiritish**:
+   - `Enter` — hozirgi qiymatni saqlash
+   - `+` — oxirgi raqamni avtomatik +1 ga oshirish
+   - Boshqa qiymat — qo'lda kiritilgan qiymat
 5. **Tasdiqlash**
 6. **Versiya fayllari yangilash**
 7. **Android signing tekshiruvi** (Production + Android bo'lsa):
@@ -98,6 +102,20 @@ flutter-build
    - Debug signing bilan davom etish
 8. **Build** — APK / AAB / IPA
 9. **Natijalarni ochish** — macOS Finder, Linux file manager yoki WSL Explorer
+
+## `+` qisqartmasi misollar
+
+Versiya yoki build number kiritish so'ralganda `+` belgisini bossangiz, eski qiymatning oxirgi raqamli qismi avtomatik +1 ga oshiriladi:
+
+| Eski qiymat | `+` natija |
+|-------------|------------|
+| `1.0.23` | `1.0.24` |
+| `34` | `35` |
+| `1.0` | `1.1` |
+| `v1.0.0` | `v1.0.1` |
+| `1.0.0-beta.3` | `1.0.0-beta.4` |
+
+Bu tezkor patch relizlar uchun foydali — versiya raqamini eslab qolish va qayta yozish o'rniga bitta `+` yetadi.
 
 ## Android signing avtomatlashtirish
 

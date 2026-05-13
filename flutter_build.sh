@@ -52,6 +52,33 @@ info() { echo -e "  ${CYAN}ℹ${NC} $1"; }
 
 # ─── Umumiy yordamchilar ──────────────────────────────────
 
+# resolve_version_input <input> <old>
+#   "" (Enter)  → old
+#   "+"         → old ning oxirgi raqamli qismini +1 (1.0.23 → 1.0.24, 34 → 35)
+#   <boshqa>    → input ni qaytaradi
+# Diagnostika xabarlari stderr ga yoziladi — natija stdout dan o'qiladi.
+resolve_version_input() {
+  local input="$1" old="$2"
+
+  [ -z "$input" ] && { printf '%s\n' "$old"; return 0; }
+
+  if [ "$input" = "+" ]; then
+    if [[ "$old" =~ ^[0-9]+$ ]]; then
+      printf '%s\n' "$((old + 1))"
+      return 0
+    fi
+    if [[ "$old" =~ ^(.*[^0-9])([0-9]+)$ ]]; then
+      printf '%s\n' "${BASH_REMATCH[1]}$((BASH_REMATCH[2] + 1))"
+      return 0
+    fi
+    warn "'+' ishlatildi, lekin '${old}' da raqamli qism topilmadi — eski qiymat saqlandi" >&2
+    printf '%s\n' "$old"
+    return 0
+  fi
+
+  printf '%s\n' "$input"
+}
+
 # open_file <path>
 #   macOS: open, Linux: xdg-open, WSL: explorer.exe, aks holda — path ni ko'rsatadi
 open_file() {
@@ -815,21 +842,21 @@ $DO_PUBGET && ok "flutter pub get: ${GREEN}yoqilgan${NC}" || info "flutter pub g
 
 # ─── 4. Yangi versiyalar (qo'lda kiritish) ────────────────
 step "Yangi versiyalarni kiriting"
-info "Enter — hozirgi qiymatni saqlaydi"
+info "Enter — hozirgi qiymatni saqlaydi  |  + — oxirgi raqamni +1 ga oshirish"
 echo
 
 read -p "    pubspec.yaml versiya  [${PUBSPEC_NAME}]: " new_pname
 read -p "    pubspec.yaml build #  [${PUBSPEC_BUILD}]: " new_pbuild
-new_pname="${new_pname:-$PUBSPEC_NAME}"
-new_pbuild="${new_pbuild:-$PUBSPEC_BUILD}"
+new_pname=$(resolve_version_input "$new_pname" "$PUBSPEC_NAME")
+new_pbuild=$(resolve_version_input "$new_pbuild" "$PUBSPEC_BUILD")
 
 new_iversion=""; new_ibuild=""
 if $BUILD_IOS; then
   echo
   read -p "    iOS versiya           [${IOS_VERSION}]: " new_iversion
   read -p "    iOS build number      [${IOS_BUILD}]: " new_ibuild
-  new_iversion="${new_iversion:-$IOS_VERSION}"
-  new_ibuild="${new_ibuild:-$IOS_BUILD}"
+  new_iversion=$(resolve_version_input "$new_iversion" "$IOS_VERSION")
+  new_ibuild=$(resolve_version_input "$new_ibuild" "$IOS_BUILD")
 fi
 
 new_aversion=""; new_abuild=""
@@ -837,8 +864,8 @@ if $BUILD_ANDROID; then
   echo
   read -p "    Android versionName   [${ANDROID_VERSION}]: " new_aversion
   read -p "    Android versionCode   [${ANDROID_BUILD}]: " new_abuild
-  new_aversion="${new_aversion:-$ANDROID_VERSION}"
-  new_abuild="${new_abuild:-$ANDROID_BUILD}"
+  new_aversion=$(resolve_version_input "$new_aversion" "$ANDROID_VERSION")
+  new_abuild=$(resolve_version_input "$new_abuild" "$ANDROID_BUILD")
 fi
 
 # ─── 5. Tasdiqlash ────────────────────────────────────────
