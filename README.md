@@ -1,6 +1,6 @@
 # Flutter Build Tool
 
-Flutter loyihalari uchun universal interaktiv build skripti. Versiya boshqaruvi, AAB/APK formatlari, Android signing avtomatik sozlash, va auto-update bilan.
+Flutter loyihalari uchun universal interaktiv build skripti. Versiya boshqaruvi, AAB/APK formatlari, Android signing avtomatik sozlash, iOS App Store Connect upload va auto-update bilan.
 
 ## Tezkor boshlash (bitta buyruq)
 
@@ -37,6 +37,7 @@ flutter-build
 - **Format tanlash** — AAB (Play Store), APK (sideload), yoki ikkalasi
 - **Debug yoki Production** rejimlar
 - **Android signing** — keystore yaratish, mavjud keystoreni ulash, `key.properties` va `build.gradle` avtomatik sozlash (eski keystore xavfsiz backup qilinadi)
+- **iOS App Store upload** — `xcrun altool` orqali avtomatik TestFlight/App Store deploy (Transporter app'iga muqobil)
 - **Auto-update** — har ishga tushganda yangilanish tekshiriladi
 - **Cross-platform ochish** — build natijalari macOS (`open`), Linux (`xdg-open`), WSL (`explorer.exe`) da avtomatik ochiladi
 
@@ -72,9 +73,10 @@ flutter-build
 
 ## Talablar
 
-- **macOS**, **Linux**, yoki **WSL** (iOS build faqat macOS)
+- **macOS**, **Linux**, yoki **WSL** (iOS build va App Store upload faqat macOS)
 - **Flutter SDK** (PATH da)
 - **Java JDK** (Android signing uchun, `keytool` kerak)
+- **Xcode Command Line Tools** (iOS App Store upload uchun, `xcrun altool` kerak)
 - **Bash 3.2+** (macOS standart bash 3.2 ham qo'llab-quvvatlanadi)
 - **curl** (auto-update uchun, ixtiyoriy)
 - **xdg-open** Linux uchun, **explorer.exe** WSL uchun (build natijalarini ochish uchun)
@@ -102,6 +104,59 @@ flutter-build
    - Debug signing bilan davom etish
 8. **Build** — APK / AAB / IPA
 9. **Natijalarni ochish** — macOS Finder, Linux file manager yoki WSL Explorer
+
+## iOS App Store Connect upload (TestFlight + App Store)
+
+Skript Transporter app'idagi qo'lda upload jarayonini avtomatlashtiradi. Menu'da `App Store Connect upload` checkbox'ini yoqing — Production va iOS bilan birga ishlatiladi.
+
+### Birinchi marta sozlash
+
+1. **App Store Connect API Key yarating**:
+   - [App Store Connect](https://appstoreconnect.apple.com/) → Users and Access → Integrations → API Keys → **`+ Generate Key`**
+   - Yaratilgan `.p8` faylni yuklab oling (**faqat bir marta** yuklash mumkin!)
+   - Key ID va Issuer ID ni eslab qoling
+
+2. **`.p8` faylni Apple konvensiyasiga muvofiq joylashtiring**:
+   ```bash
+   mkdir -p ~/.appstoreconnect/private_keys
+   mv ~/Downloads/AuthKey_AB12CD34.p8 ~/.appstoreconnect/private_keys/
+   ```
+
+3. **Skriptni ishga tushiring** — birinchi safar interaktiv setup boshlanadi:
+   - Key ID kiritasiz
+   - Issuer ID kiritasiz
+   - `.p8` yo'lini tasdiqlaysiz
+   - Sozlamalar `~/.config/flutter-build-tool/app_store_connect.json` ga saqlanadi (`chmod 600`)
+
+4. **`ios/ExportOptions.plist` yo'q bo'lsa**, skript Team ID so'rab avtomatik yaratadi.
+
+### Keyingi safarlardan
+
+Hech narsa kiritish kerak emas — sozlamalar saqlangan. Faqat checkbox yoqing va build tugagach upload avtomatik boshlanadi.
+
+### Upload jarayoni
+
+```
+▶ App Store Connect ga yuklash
+  ℹ IPA:    build/ios/ipa/MyApp.ipa (24 MB)
+  ℹ Key ID: AB12CD34
+  ℹ Jarayon 5-30 daqiqa davom etishi mumkin. Ulanish uzilmasligi muhim.
+
+  [xcrun altool real-time progress]
+
+  ✓ Muvaffaqiyatli yuklandi!
+  ℹ TestFlight processing 10-30 daqiqa davom etadi
+  ℹ Status uchun email kuting yoki: https://appstoreconnect.apple.com/apps
+```
+
+### Xato hollar
+
+| Xato | Sabab | Yechim |
+|------|-------|--------|
+| `No app with bundle identifier...` | App Store Connect'da app yaratilmagan | App Store Connect'da yangi app yarating |
+| `Redundant Binary Upload` | Bu versiya allaqachon yuklangan | `pubspec.yaml` da build numberni `+` bilan oshiring |
+| `Invalid Code Signing` | Distribution certificate yaroqsiz | Xcode → Settings → Accounts → Manage Certificates |
+| `Team ID mismatch` | `ExportOptions.plist` da noto'g'ri Team ID | Apple Developer hisobidan to'g'ri Team ID ni kiriting |
 
 ## `+` qisqartmasi misollar
 

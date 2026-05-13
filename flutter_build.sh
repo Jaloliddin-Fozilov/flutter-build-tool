@@ -708,6 +708,238 @@ setup_android_signing() {
   fi
 }
 
+# ─── iOS App Store Connect deploy yordamchi funksiyalari ──
+
+# Config fayl yo'li: ~/.config/flutter-build-tool/app_store_connect.json
+appstore_config_dir()  { echo "${HOME}/.config/flutter-build-tool"; }
+appstore_config_file() { echo "$(appstore_config_dir)/app_store_connect.json"; }
+
+# Config dan qiymat o'qish (key_id, issuer_id, key_path)
+# jq talab qilmaydi — sodda regex bilan
+appstore_config_get() {
+  local key="$1"
+  local file
+  file=$(appstore_config_file)
+  [ ! -f "$file" ] && return 1
+  grep -E "\"${key}\"" "$file" | head -1 \
+    | sed -E "s/.*\"${key}\"[[:space:]]*:[[:space:]]*\"([^\"]*)\".*/\1/"
+}
+
+# Joriy konfiguratsiyani ko'rsatish (sezgir ma'lumotlar yashirilgan)
+show_appstore_config() {
+  local kid iid kp
+  kid=$(appstore_config_get "key_id")
+  iid=$(appstore_config_get "issuer_id")
+  kp=$(appstore_config_get "key_path")
+
+  echo
+  echo -e "  ${BOLD}╭─ App Store Connect API ───────────────────────╮${NC}"
+  printf  "  ${BOLD}│${NC}  ${CYAN}%-12s${NC} ${YELLOW}%s${NC}\n" "Key ID"    "${kid}"
+  printf  "  ${BOLD}│${NC}  ${CYAN}%-12s${NC} ${YELLOW}%s…${NC}\n" "Issuer ID" "${iid:0:8}"
+  printf  "  ${BOLD}│${NC}  ${CYAN}%-12s${NC} ${YELLOW}%s${NC}\n" "Key path"  "${kp}"
+  echo -e "  ${BOLD}╰────────────────────────────────────────────────╯${NC}"
+}
+
+# Interaktiv sozlash — yangi API Key kiritish
+setup_appstore_credentials() {
+  step "App Store Connect API Key sozlash"
+  info "App Store Connect → Users and Access → Integrations → API Keys'da yarating"
+  info "'.p8' faylni yuklab olib, xavfsiz joyga saqlang (faqat bir marta yuklanadi!)"
+  echo
+
+  local key_id issuer_id key_path default_path
+  read -p "    Key ID (masalan AB12CD34): " key_id
+  if [ -z "$key_id" ]; then
+    err "Key ID bo'sh bo'lishi mumkin emas"
+    return 1
+  fi
+
+  read -p "    Issuer ID (UUID format, masalan 12345678-1234-...): " issuer_id
+  if [ -z "$issuer_id" ]; then
+    err "Issuer ID bo'sh bo'lishi mumkin emas"
+    return 1
+  fi
+
+  default_path="${HOME}/.appstoreconnect/private_keys/AuthKey_${key_id}.p8"
+  read -p "    .p8 fayl yo'li [${default_path}]: " key_path
+  key_path="${key_path:-$default_path}"
+
+  if [ ! -f "$key_path" ]; then
+    warn ".p8 fayl topilmadi: $key_path"
+    info "Faylni quyidagi joyga ko'chiring (Apple konvensiyasi):"
+    info "  ${default_path}"
+    return 1
+  fi
+
+  # Config faylni yozish (chmod 600 — faqat egasi o'qiy oladi)
+  local dir
+  dir=$(appstore_config_dir)
+  mkdir -p "$dir"
+  chmod 700 "$dir"
+
+  local cfg
+  cfg=$(appstore_config_file)
+  cat > "$cfg" <<JSON
+{
+  "key_id": "${key_id}",
+  "issuer_id": "${issuer_id}",
+  "key_path": "${key_path}"
+}
+JSON
+  chmod 600 "$cfg"
+  ok "Sozlandi: $cfg"
+}
+
+# Konfiguratsiyani ta'minlash — mavjud bo'lsa tekshiradi, yo'q bo'lsa sozlashni taklif qiladi
+ensure_appstore_credentials() {
+  local cfg kid iid kp
+  cfg=$(appstore_config_file)
+
+  if [ -f "$cfg" ]; then
+    kid=$(appstore_config_get "key_id")
+    iid=$(appstore_config_get "issuer_id")
+    kp=$(appstore_config_get "key_path")
+
+    info "Mavjud App Store Connect API sozlamasi topildi"
+    show_appstore_config
+
+    if [ ! -f "$kp" ]; then
+      warn ".p8 fayl yo'qolgan: $kp"
+      read -p "  Yangi sozlovni kiritamizmi? (y/n): " redo
+      [[ "$redo" =~ ^[Yy]$ ]] && setup_appstore_credentials || return 1
+      return 0
+    fi
+
+    echo
+    read -p "  Shu sozlamalar bilan davom etamizmi? (y/n): " usecur
+    if [[ ! "$usecur" =~ ^[Yy]$ ]]; then
+      setup_appstore_credentials || return 1
+    fi
+  else
+    info "App Store Connect API hali sozlanmagan"
+    read -p "  Hozir sozlaymizmi? (y/n): " setup_now
+    if [[ "$setup_now" =~ ^[Yy]$ ]]; then
+      setup_appstore_credentials || return 1
+    else
+      return 1
+    fi
+  fi
+}
+
+# ExportOptions.plist mavjudligini ta'minlash (yo'q bo'lsa, yaratish)
+ensure_export_options() {
+  local plist="ios/ExportOptions.plist"
+
+  if [ -f "$plist" ]; then
+    ok "ExportOptions.plist mavjud: $plist"
+    return 0
+  fi
+
+  warn "${plist} topilmadi"
+  info "Bu fayl 'flutter build ipa --export-options-plist' uchun kerak"
+  echo
+  read -p "  Yaratib beraymi? (y/n): " create
+  [[ ! "$create" =~ ^[Yy]$ ]] && { warn "Bekor qilindi"; return 1; }
+
+  local team_id
+  read -p "    Apple Team ID (10 belgi, Apple Developer hisobingizdan): " team_id
+  if [ -z "$team_id" ]; then
+    err "Team ID bo'sh bo'lishi mumkin emas"
+    return 1
+  fi
+
+  cat > "$plist" <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>method</key>
+    <string>app-store</string>
+    <key>teamID</key>
+    <string>${team_id}</string>
+    <key>signingStyle</key>
+    <string>automatic</string>
+    <key>uploadBitcode</key>
+    <false/>
+    <key>uploadSymbols</key>
+    <true/>
+    <key>destination</key>
+    <string>export</string>
+</dict>
+</plist>
+PLIST
+  ok "Yaratildi: $plist"
+  info "Agar manual signing kerak bo'lsa, signingStyle ni 'manual' ga o'zgartiring"
+}
+
+# IPA fayl yo'lini topish (build/ios/ipa/ dan)
+find_latest_ipa() {
+  local dir="build/ios/ipa"
+  [ ! -d "$dir" ] && return 1
+  # Eng yangi .ipa faylni topish (mtime bo'yicha)
+  local ipa
+  ipa=$(find "$dir" -maxdepth 1 -name "*.ipa" -type f 2>/dev/null \
+        | head -1)
+  [ -z "$ipa" ] && return 1
+  echo "$ipa"
+}
+
+# xcrun altool orqali App Store Connect ga yuklash
+upload_to_appstore() {
+  local ipa="$1"
+
+  step "App Store Connect ga yuklash"
+
+  if ! command -v xcrun > /dev/null 2>&1; then
+    err "xcrun topilmadi — Xcode Command Line Tools o'rnatilganmi?"
+    return 1
+  fi
+
+  local kid iid
+  kid=$(appstore_config_get "key_id")
+  iid=$(appstore_config_get "issuer_id")
+
+  if [ -z "$kid" ] || [ -z "$iid" ]; then
+    err "App Store Connect API sozlanmagan"
+    return 1
+  fi
+
+  if [ ! -f "$ipa" ]; then
+    err "IPA fayl topilmadi: $ipa"
+    return 1
+  fi
+
+  local size_kb
+  size_kb=$(du -k "$ipa" | cut -f1)
+  info "IPA:    $ipa ($((size_kb / 1024)) MB)"
+  info "Key ID: $kid"
+  info "Jarayon 5-30 daqiqa davom etishi mumkin. Ulanish uzilmasligi muhim."
+  echo
+
+  # altool sahna ortida API Key faylini ~/.appstoreconnect/private_keys/ dan topadi
+  # (yoki ./private_keys/, yoki shunga o'xshash yo'llardan)
+  if xcrun altool --upload-app \
+       --type ios \
+       --file "$ipa" \
+       --apiKey "$kid" \
+       --apiIssuer "$iid"; then
+    echo
+    ok "Muvaffaqiyatli yuklandi!"
+    info "TestFlight processing 10-30 daqiqa davom etadi"
+    info "Status uchun email kuting yoki: https://appstoreconnect.apple.com/apps"
+    return 0
+  else
+    echo
+    err "Yuklash xato berdi — yuqorida xato matnini ko'ring"
+    info "Eng keng tarqalgan sabablar:"
+    info "  - Bundle ID App Store Connect'da yaratilmagan"
+    info "  - Versiya raqami avval yuklangan bilan bir xil"
+    info "  - Distribution certificate yaroqsiz/eskirgan"
+    info "  - ExportOptions.plist'da noto'g'ri Team ID"
+    return 1
+  fi
+}
+
 # ─── Validatsiya ──────────────────────────────────────────
 if [ ! -f "pubspec.yaml" ]; then
   err "pubspec.yaml topilmadi. Skript Flutter loyihasi ildizidan ishga tushishi kerak."
@@ -786,13 +1018,15 @@ arrow_checkbox "Tanlovlar (Debug = Production yoqilmasa)" \
   "Android" \
   "iOS" \
   "flutter clean" \
-  "flutter pub get"
+  "flutter pub get" \
+  "App Store Connect upload (Production + iOS bilan)"
 
 IS_PROD="${CHECKBOX_RESULT[0]}"
 BUILD_ANDROID="${CHECKBOX_RESULT[1]}"
 BUILD_IOS="${CHECKBOX_RESULT[2]}"
 DO_CLEAN="${CHECKBOX_RESULT[3]}"
 DO_PUBGET="${CHECKBOX_RESULT[4]}"
+DO_APPSTORE_UPLOAD="${CHECKBOX_RESULT[5]}"
 
 if $IS_PROD; then MODE_LABEL="PRODUCTION"; else MODE_LABEL="DEBUG"; fi
 
@@ -804,6 +1038,17 @@ fi
 if $BUILD_IOS && [ "$(uname)" != "Darwin" ]; then
   err "iOS build faqat macOS da ishlaydi"
   exit 1
+fi
+
+if $DO_APPSTORE_UPLOAD; then
+  if ! $IS_PROD; then
+    err "App Store upload faqat Production rejimda ishlaydi"
+    exit 1
+  fi
+  if ! $BUILD_IOS; then
+    err "App Store upload uchun iOS tanlanishi kerak"
+    exit 1
+  fi
 fi
 
 # ─── 2b. Android format tanlovi ───────────────────────────
@@ -920,6 +1165,13 @@ if $IS_PROD && $BUILD_ANDROID; then
   setup_android_signing
 fi
 
+# ─── 7b. App Store upload pre-check (Production + iOS) ────
+if $DO_APPSTORE_UPLOAD; then
+  step "App Store Connect upload sozlamalarini tekshirish"
+  ensure_appstore_credentials || { err "App Store Connect sozlanmadi"; exit 1; }
+  ensure_export_options || { err "ExportOptions.plist sozlanmadi"; exit 1; }
+fi
+
 # ─── 8. Flutter tayyorlash ────────────────────────────────
 if $DO_CLEAN || $DO_PUBGET; then
   step "Loyiha tayyorlanmoqda"
@@ -969,8 +1221,13 @@ fi
 if $BUILD_IOS; then
   step "iOS build (${MODE_LABEL})"
   if $IS_PROD; then
-    info "flutter build ipa --release"
-    flutter build ipa --release
+    if $DO_APPSTORE_UPLOAD; then
+      info "flutter build ipa --release --export-options-plist ios/ExportOptions.plist"
+      flutter build ipa --release --export-options-plist ios/ExportOptions.plist
+    else
+      info "flutter build ipa --release"
+      flutter build ipa --release
+    fi
     BUILD_PATHS+=("$(pwd)/build/ios/ipa")
   else
     info "flutter build ios --debug --no-codesign"
@@ -978,6 +1235,15 @@ if $BUILD_IOS; then
     BUILD_PATHS+=("$(pwd)/build/ios/iphoneos")
   fi
   ok "iOS build muvaffaqiyatli"
+fi
+
+# ─── 9b. App Store Connect ga upload ──────────────────────
+if $DO_APPSTORE_UPLOAD; then
+  ipa_file=$(find_latest_ipa) || {
+    err "IPA fayl topilmadi build/ios/ipa/ ichida"
+    exit 1
+  }
+  upload_to_appstore "$ipa_file" || warn "Upload xato berdi — IPA fayl saqlangan: $ipa_file"
 fi
 
 # ─── 10. Build natijalarini ochish (macOS/Linux/WSL) ──────
