@@ -5,6 +5,32 @@ Loyihaning barcha muhim o'zgarishlari shu faylga yoziladi.
 Format [Keep a Changelog](https://keepachangelog.com/uz/1.1.0/) asosida,
 versiyalash esa [Semantic Versioning](https://semver.org/lang/uz/) qoidasiga rioya qiladi.
 
+## [1.3.0] — 2026-05-14
+
+### Qo'shildi
+
+- **Android Play Store upload** — Google Play Developer API ga to'g'ridan-to'g'ri
+  upload. Hech qanday Ruby, Python yoki Node yo'q — pure bash + openssl + curl.
+  - Yangi menu opsiyasi: `[ ] Play Store upload (Production + Android + AAB bilan)`
+  - **JWT RS256 signing** openssl bilan to'g'ridan-to'g'ri (RFC 7515 muvofiq base64url)
+  - 4 ta API call'ni avtomatik orkestratsiya qiladi:
+    `edits` → `bundles upload` → `tracks` → `:commit`
+  - Service Account JSON `~/.config/flutter-build-tool/play_store_key.json` ga
+    saqlanadi (`chmod 600`), sozlama `play_store.json` da.
+  - Track tanlash: `internal`/`alpha`/`beta`/`production` (default: `internal`).
+  - Package name avtomatik aniqlanadi `android/app/build.gradle*` dan.
+  - Xato hollari uchun foydali ko'rsatmalar.
+- **Loyiha fayllariga teginmaslik** — Triple-T plugin yoki Fastfile kabi
+  yondashuvlardan farqli ravishda, `build.gradle` ga hech narsa qo'shilmaydi.
+  Faqat `~/.config/flutter-build-tool/` dagi sozlamalar.
+
+### Talablar
+
+- `openssl` (JWT RS256 signing uchun) — macOS, Linux'da bor.
+- `curl` — OAuth2 + API calls uchun.
+- Google Play Developer hisob + Service Account + JSON Key fayli.
+- App allaqachon Play Console'da yaratilgan va birinchi qo'lda upload qilingan.
+
 ## [1.2.0] — 2026-05-14
 
 ### Qo'shildi
@@ -71,6 +97,7 @@ versiyalash esa [Semantic Versioning](https://semver.org/lang/uz/) qoidasiga rio
 - AAB va APK formatlari, Production va Debug rejimlari.
 - Build natijalarini Finder'da avtomatik ochish.
 
+[1.3.0]: https://github.com/Jaloliddin-Fozilov/flutter-build-tool/releases/tag/v1.3.0
 [1.2.0]: https://github.com/Jaloliddin-Fozilov/flutter-build-tool/releases/tag/v1.2.0
 [1.1.0]: https://github.com/Jaloliddin-Fozilov/flutter-build-tool/releases/tag/v1.1.0
 [1.0.0]: https://github.com/Jaloliddin-Fozilov/flutter-build-tool/releases/tag/v1.0.0
