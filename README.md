@@ -1,6 +1,6 @@
 # Flutter Build Tool
 
-Flutter loyihalari uchun universal interaktiv build skripti. Versiya boshqaruvi, AAB/APK formatlari, Android signing avtomatik sozlash, iOS App Store Connect upload va auto-update bilan.
+Flutter loyihalari uchun universal interaktiv build skripti. Versiya boshqaruvi, AAB/APK formatlari, Android signing avtomatik sozlash, iOS App Store Connect upload, Android Play Store upload va auto-update bilan.
 
 ## Tezkor boshlash (bitta buyruq)
 
@@ -38,6 +38,7 @@ flutter-build
 - **Debug yoki Production** rejimlar
 - **Android signing** — keystore yaratish, mavjud keystoreni ulash, `key.properties` va `build.gradle` avtomatik sozlash (eski keystore xavfsiz backup qilinadi)
 - **iOS App Store upload** — `xcrun altool` orqali avtomatik TestFlight/App Store deploy (Transporter app'iga muqobil)
+- **Android Play Store upload** — Google Play Developer API ga to'g'ridan-to'g'ri (Ruby, Python, Node — hech narsa kerak emas; pure bash + openssl)
 - **Auto-update** — har ishga tushganda yangilanish tekshiriladi
 - **Cross-platform ochish** — build natijalari macOS (`open`), Linux (`xdg-open`), WSL (`explorer.exe`) da avtomatik ochiladi
 
@@ -77,8 +78,9 @@ flutter-build
 - **Flutter SDK** (PATH da)
 - **Java JDK** (Android signing uchun, `keytool` kerak)
 - **Xcode Command Line Tools** (iOS App Store upload uchun, `xcrun altool` kerak)
+- **openssl** (Android Play Store upload uchun, JWT RS256 signing kerak) — macOS/Linux'da bor
 - **Bash 3.2+** (macOS standart bash 3.2 ham qo'llab-quvvatlanadi)
-- **curl** (auto-update uchun, ixtiyoriy)
+- **curl** (auto-update va deploy uchun)
 - **xdg-open** Linux uchun, **explorer.exe** WSL uchun (build natijalarini ochish uchun)
 
 ## Ishlash jarayoni
@@ -104,6 +106,95 @@ flutter-build
    - Debug signing bilan davom etish
 8. **Build** — APK / AAB / IPA
 9. **Natijalarni ochish** — macOS Finder, Linux file manager yoki WSL Explorer
+
+## Android Play Store upload
+
+Skript Play Console'dagi qo'lda AAB upload jarayonini avtomatlashtiradi. Triple-T plugin yoki fastlane kabi alohida dependency'lar **kerak emas** — to'g'ridan-to'g'ri Google Play Developer API'siga ulanadi (`openssl` bilan RS256 JWT signing).
+
+Menu'da `Play Store upload` checkbox'ini yoqing — Production + Android + AAB bilan birga ishlatiladi.
+
+### Birinchi marta sozlash
+
+#### 1) Google Cloud Service Account yaratish
+
+1. [Google Cloud Console](https://console.cloud.google.com) ga kiring (Play Console hisobingiz bilan)
+2. **Project** tanlang (yoki yarating)
+3. **APIs & Services** → **Library** → **"Google Play Android Developer API"** ni yoqing
+4. **IAM & Admin** → **Service Accounts** → **Create Service Account**
+   - Name: `flutter-build-deploy`
+   - "Grant access" qadamini **skip**
+5. Yaratilgan Service Account → **Keys** → **Add Key** → **Create new key** → **JSON**
+6. JSON fayl yuklab olinadi — uni xavfsiz joyga saqlang
+
+#### 2) Play Console'da ruxsat berish
+
+1. [Play Console](https://play.google.com/console) → **Setup** → **API access**
+2. Google Cloud project'ni tanlang (1-qadamdagi project)
+3. Yaratilgan Service Account paydo bo'ladi → **Grant access**
+4. **App permissions**: faqat sizning app'ingizni tanlang (xavfsizlik uchun)
+5. **Account permissions**: kerakli ruxsatlar:
+   - ✅ Releases — "Release apps to testing tracks"
+   - ✅ Releases — "Release to production..."
+   - ✅ Store presence — "View app information..."
+6. **Apply** ni bosing
+
+#### 3) Tool sozlash
+
+Skriptni Production + Android + AAB + Play Store upload bilan ishga tushiring — interaktiv setup boshlanadi:
+- Service Account JSON yo'li so'raladi
+- Tool standart joyga ko'chirib qo'yishni taklif qiladi (`~/.config/flutter-build-tool/play_store_key.json`)
+- Package name (applicationId) avtomatik aniqlanadi
+- Default track tanlanadi (tavsiya: `internal`)
+- Sozlamalar `~/.config/flutter-build-tool/play_store.json` ga saqlanadi
+
+### Keyingi safarlardan
+
+Hech narsa kiritish kerak emas — sozlamalar yodda. Faqat checkbox yoqing va build tugagach upload avtomatik boshlanadi.
+
+### Upload jarayoni
+
+```
+▶ Play Store ga yuklash
+  ℹ AAB:          build/app/outputs/bundle/release/app-release.aab (15 MB)
+  ℹ Package:      com.example.myapp
+  ℹ Track:        internal
+  ℹ Service Acc:  flutter-build-deploy@my-project.iam.gserviceaccount.com
+
+  ℹ [1/5] Access token olinmoqda...     ✓
+  ℹ [2/5] Edit yaratilmoqda...           ✓ Edit yaratildi: abc123
+  ℹ [3/5] AAB yuklanmoqda (15 MB)...    ✓ AAB yuklandi, versionCode=42
+  ℹ [4/5] Track'ga qo'shilmoqda: internal... ✓ Track'ga qo'shildi
+  ℹ [5/5] Edit commit qilinmoqda...     ✓
+
+  ✓ Muvaffaqiyatli yuklandi!
+```
+
+### Track'lar haqida
+
+| Track | Tavsifi | Qachon ishlatish |
+|-------|---------|------------------|
+| `internal` | Darrov publish, faqat 100 gacha internal tester | Tezkor sinov, hech qanday review yo'q |
+| `alpha` | Closed testing, ko'p testerlar | Beta'dan oldin keng sinov |
+| `beta` | Open testing, hamma kira oladi (link bilan) | Public beta |
+| `production` | Play Store'da publish | Real reliz (Google review bo'lishi mumkin) |
+
+**Tavsiya**: avval `internal` track'ga yuboring, sinab ko'ring, keyin Play Console'da `production` ga "promote" qiling.
+
+### Xato hollar
+
+| Xato | Sabab | Yechim |
+|------|-------|--------|
+| `403 The caller does not have permission` | Service Account permissions yetishmaydi | Play Console → API access → Service Account → Releases ruxsatlari |
+| `Package not found` | `package_name` noto'g'ri yoki birinchi upload qilinmagan | App allaqachon Play Console'da yaratilgan va birinchi AAB qo'lda yuklangan bo'lishi kerak |
+| `Version code already used` | Versiya raqami avval yuklangan | `pubspec.yaml` da build numberni `+` bilan oshiring (interactive menu'da `+` qisqartmasi) |
+| `Bundle is not signed` | AAB signed emas | Production build qiling (`Production` checkbox'ini yoqing) |
+| `OAuth2 error` | JWT yoki Service Account JSON xato | `.p8` faylni qayta tekshiring, Cloud Console'da Service Account holatini ko'ring |
+
+### Xavfsizlik haqida
+
+- **Service Account JSON git'ga commit qilinmasligi shart** — `.gitignore` ga qo'shing
+- Tool faylni `chmod 600` qiladi (faqat egasi o'qiy oladi)
+- Service Account JSON yo'qolsa, Cloud Console'da kalitni o'chirib yangisini yarating — Google account parolingiz xavfsiz qoladi
 
 ## iOS App Store Connect upload (TestFlight + App Store)
 

@@ -940,6 +940,421 @@ upload_to_appstore() {
   fi
 }
 
+# ─── Android Play Store deploy yordamchi funksiyalari ─────
+# Direct Google Play Developer API (curl + openssl, hech qanday Ruby/Python/Node yo'q)
+# JWT RS256 signing pure bash'da, base64url encoding RFC 7515 ga muvofiq.
+
+# Config yo'llari
+play_config_dir()  { echo "${HOME}/.config/flutter-build-tool"; }
+play_config_file() { echo "$(play_config_dir)/play_store.json"; }
+
+# Bizning config dan qiymat o'qish
+play_config_get() {
+  local key="$1"
+  local file
+  file=$(play_config_file)
+  [ ! -f "$file" ] && return 1
+  grep -E "\"${key}\"" "$file" | head -1 \
+    | sed -E "s/.*\"${key}\"[[:space:]]*:[[:space:]]*\"([^\"]*)\".*/\1/"
+}
+
+# Service Account JSON dan oddiy string qiymat o'qish
+sa_json_get_simple() {
+  local file="$1" key="$2"
+  grep -o "\"${key}\"[[:space:]]*:[[:space:]]*\"[^\"]*\"" "$file" \
+    | head -1 \
+    | sed -E "s/.*\"${key}\"[[:space:]]*:[[:space:]]*\"([^\"]*)\".*/\1/"
+}
+
+# Service Account JSON dan private_key ni o'qish va \n escape'larni real
+# newlinega aylantirish (printf %b orqali).
+sa_json_get_private_key() {
+  local file="$1"
+  local raw
+  raw=$(grep -o '"private_key"[[:space:]]*:[[:space:]]*"[^"]*"' "$file" \
+    | sed -E 's/^"private_key"[[:space:]]*:[[:space:]]*"//; s/"$//')
+  printf '%b' "$raw"
+}
+
+# base64url encoding (RFC 7515): standard base64 + tr + padding olib tashlash
+# String argument uchun
+b64url_encode_str() {
+  printf '%s' "$1" | openssl base64 -A | tr -d '=' | tr '/+' '_-'
+}
+
+# Stdin dan binary data uchun (signature uchun)
+b64url_encode_stream() {
+  openssl base64 -A | tr -d '=' | tr '/+' '_-'
+}
+
+# RS256 JWT yaratish — Google API uchun
+play_generate_jwt() {
+  local sa_json="$1"
+  local client_email private_key now exp
+
+  client_email=$(sa_json_get_simple "$sa_json" "client_email")
+  private_key=$(sa_json_get_private_key "$sa_json")
+
+  if [ -z "$client_email" ] || [ -z "$private_key" ]; then
+    err "Service Account JSON noto'g'ri yoki bo'sh"
+    return 1
+  fi
+
+  now=$(date +%s)
+  exp=$((now + 3600))
+
+  local header='{"alg":"RS256","typ":"JWT"}'
+  local payload
+  payload=$(printf '{"iss":"%s","scope":"https://www.googleapis.com/auth/androidpublisher","aud":"https://oauth2.googleapis.com/token","exp":%d,"iat":%d}' \
+    "$client_email" "$exp" "$now")
+
+  local header_b64 payload_b64 signing_input
+  header_b64=$(b64url_encode_str "$header")
+  payload_b64=$(b64url_encode_str "$payload")
+  signing_input="${header_b64}.${payload_b64}"
+
+  # private_key'ni vaqtinchalik faylga yozish (openssl PEM fayl/stdin oladi)
+  local key_file signature
+  key_file=$(mktemp)
+  chmod 600 "$key_file"
+  printf '%s' "$private_key" > "$key_file"
+
+  signature=$(printf '%s' "$signing_input" \
+    | openssl dgst -sha256 -sign "$key_file" -binary 2>/dev/null \
+    | b64url_encode_stream)
+
+  rm -f "$key_file"
+
+  if [ -z "$signature" ]; then
+    err "JWT imzolash xato berdi (openssl)"
+    return 1
+  fi
+
+  printf '%s.%s\n' "$signing_input" "$signature"
+}
+
+# JWT ni access_token ga ayirboshlash (OAuth2)
+play_get_access_token() {
+  local jwt="$1"
+  local response token
+
+  response=$(curl -fsS -X POST "https://oauth2.googleapis.com/token" \
+    --data-urlencode "grant_type=urn:ietf:params:oauth:grant-type:jwt-bearer" \
+    --data-urlencode "assertion=${jwt}" 2>&1) || {
+      err "Access token so'rovi xato berdi: $response"
+      return 1
+    }
+
+  token=$(printf '%s' "$response" \
+    | grep -o '"access_token"[[:space:]]*:[[:space:]]*"[^"]*"' \
+    | sed -E 's/.*"access_token"[[:space:]]*:[[:space:]]*"([^"]*)".*/\1/')
+
+  if [ -z "$token" ]; then
+    err "access_token javobda topilmadi"
+    err "Javob: $response"
+    return 1
+  fi
+
+  printf '%s' "$token"
+}
+
+# pubspec/gradle dan package name (applicationId) ni aniqlash
+detect_android_package_name() {
+  local pkg=""
+  if [ -f "android/app/build.gradle.kts" ]; then
+    pkg=$(grep -oE 'applicationId[[:space:]]*=[[:space:]]*"[^"]*"' android/app/build.gradle.kts \
+      | head -1 | sed -E 's/.*"([^"]*)".*/\1/')
+  fi
+  if [ -z "$pkg" ] && [ -f "android/app/build.gradle" ]; then
+    pkg=$(grep -oE 'applicationId[[:space:]]+"[^"]*"' android/app/build.gradle \
+      | head -1 | sed -E 's/applicationId[[:space:]]+"([^"]*)"/\1/')
+  fi
+  echo "$pkg"
+}
+
+# Joriy konfiguratsiyani ko'rsatish
+show_play_config() {
+  local sa_path pkg track sa_email
+  sa_path=$(play_config_get "service_account_path")
+  pkg=$(play_config_get "package_name")
+  track=$(play_config_get "track")
+  sa_email=""
+  [ -f "$sa_path" ] && sa_email=$(sa_json_get_simple "$sa_path" "client_email")
+
+  echo
+  echo -e "  ${BOLD}╭─ Google Play Store ───────────────────────────╮${NC}"
+  printf  "  ${BOLD}│${NC}  ${CYAN}%-14s${NC} ${YELLOW}%s${NC}\n" "Package"     "$pkg"
+  printf  "  ${BOLD}│${NC}  ${CYAN}%-14s${NC} ${YELLOW}%s${NC}\n" "Track"       "$track"
+  printf  "  ${BOLD}│${NC}  ${CYAN}%-14s${NC} ${YELLOW}%s${NC}\n" "Service Acc" "$sa_email"
+  printf  "  ${BOLD}│${NC}  ${CYAN}%-14s${NC} ${YELLOW}%s${NC}\n" "Key path"    "$sa_path"
+  echo -e "  ${BOLD}╰────────────────────────────────────────────────╯${NC}"
+}
+
+# Interaktiv sozlash
+setup_play_credentials() {
+  step "Google Play Service Account sozlash"
+  info "Sozlash bosqichlari README'da: '## Android Play Store deploy'"
+  info "1) Google Cloud Console'da Service Account yarating"
+  info "2) JSON Key fayl yuklab oling"
+  info "3) Play Console'da Service Account'ga Releases ruxsatlari bering"
+  echo
+
+  local sa_path
+  read -p "    Service Account JSON yo'li: " sa_path
+  sa_path="${sa_path/#\~/$HOME}"
+
+  if [ ! -f "$sa_path" ]; then
+    err "Fayl topilmadi: $sa_path"
+    return 1
+  fi
+
+  # JSON tuzilishini tasdiqlash
+  local client_email
+  client_email=$(sa_json_get_simple "$sa_path" "client_email")
+  if [[ ! "$client_email" =~ \.iam\.gserviceaccount\.com$ ]]; then
+    err "Bu Service Account JSON ko'rinmaydi (client_email noto'g'ri)"
+    return 1
+  fi
+  ok "Service Account aniqlandi: $client_email"
+
+  # Standart joyga ko'chirish taklif
+  local std_path="${HOME}/.config/flutter-build-tool/play_store_key.json"
+  if [ "$sa_path" != "$std_path" ]; then
+    echo
+    read -p "    Standart joyga ko'chirib qo'yaymi (${std_path})? (y/n): " move
+    if [[ "$move" =~ ^[Yy]$ ]]; then
+      mkdir -p "$(dirname "$std_path")"
+      chmod 700 "$(dirname "$std_path")"
+      cp "$sa_path" "$std_path"
+      chmod 600 "$std_path"
+      sa_path="$std_path"
+      ok "Ko'chirildi: $std_path"
+    fi
+  fi
+
+  # Package name
+  local default_pkg
+  default_pkg=$(detect_android_package_name)
+  echo
+  read -p "    Package name (applicationId) [${default_pkg}]: " package_name
+  package_name="${package_name:-$default_pkg}"
+
+  if [ -z "$package_name" ]; then
+    err "Package name bo'sh bo'lishi mumkin emas"
+    return 1
+  fi
+
+  # Track
+  echo
+  info "Mavjud track'lar: internal, alpha, beta, production"
+  info "Tavsiya: 'internal' (darrov publish, faqat ichki testerlar)"
+  read -p "    Default track [internal]: " track
+  track="${track:-internal}"
+
+  # Sozlamalarni saqlash
+  local dir cfg
+  dir=$(play_config_dir)
+  mkdir -p "$dir"
+  chmod 700 "$dir"
+
+  cfg=$(play_config_file)
+  cat > "$cfg" <<JSON
+{
+  "service_account_path": "${sa_path}",
+  "package_name": "${package_name}",
+  "track": "${track}"
+}
+JSON
+  chmod 600 "$cfg"
+  ok "Sozlandi: $cfg"
+}
+
+# Sozlamalar mavjudligini ta'minlash
+ensure_play_credentials() {
+  local cfg
+  cfg=$(play_config_file)
+
+  if [ -f "$cfg" ]; then
+    local sa_path
+    sa_path=$(play_config_get "service_account_path")
+
+    info "Mavjud Play Store sozlamasi topildi"
+    show_play_config
+
+    if [ ! -f "$sa_path" ]; then
+      warn "Service Account JSON yo'qolgan: $sa_path"
+      read -p "  Yangi sozlovni kiritamizmi? (y/n): " redo
+      [[ "$redo" =~ ^[Yy]$ ]] && setup_play_credentials || return 1
+      return 0
+    fi
+
+    echo
+    read -p "  Shu sozlamalar bilan davom etamizmi? (y/n): " usecur
+    if [[ ! "$usecur" =~ ^[Yy]$ ]]; then
+      setup_play_credentials || return 1
+    fi
+  else
+    info "Play Store sozlanmagan"
+    read -p "  Hozir sozlaymizmi? (y/n): " setup_now
+    if [[ "$setup_now" =~ ^[Yy]$ ]]; then
+      setup_play_credentials || return 1
+    else
+      return 1
+    fi
+  fi
+}
+
+# Build natijasidan AAB faylini topish
+find_latest_aab() {
+  local dir="build/app/outputs/bundle/release"
+  [ ! -d "$dir" ] && return 1
+  local aab
+  aab=$(find "$dir" -maxdepth 1 -name "*.aab" -type f 2>/dev/null | head -1)
+  [ -z "$aab" ] && return 1
+  echo "$aab"
+}
+
+# JSON javobdan qiymat ekstraksiya qilish (oddiy parsing)
+extract_json_field() {
+  local json="$1" field="$2"
+  printf '%s' "$json" | grep -o "\"${field}\"[[:space:]]*:[[:space:]]*\"[^\"]*\"" \
+    | head -1 \
+    | sed -E "s/.*\"${field}\"[[:space:]]*:[[:space:]]*\"([^\"]*)\".*/\1/"
+}
+
+# JSON javobdan raqamli qiymat ekstraksiya
+extract_json_number() {
+  local json="$1" field="$2"
+  printf '%s' "$json" | grep -o "\"${field}\"[[:space:]]*:[[:space:]]*[0-9]*" \
+    | head -1 \
+    | sed -E "s/.*:[[:space:]]*([0-9]+).*/\1/"
+}
+
+# 4 ta API call orqali AAB ni Play Store'ga yuklash
+upload_to_play_store() {
+  local aab="$1"
+
+  step "Play Store ga yuklash"
+
+  if ! command -v openssl > /dev/null 2>&1; then
+    err "openssl topilmadi (JWT signing uchun kerak)"
+    return 1
+  fi
+  if ! command -v curl > /dev/null 2>&1; then
+    err "curl topilmadi"
+    return 1
+  fi
+
+  local sa_path package_name track
+  sa_path=$(play_config_get "service_account_path")
+  package_name=$(play_config_get "package_name")
+  track=$(play_config_get "track")
+  track="${track:-internal}"
+
+  if [ -z "$sa_path" ] || [ ! -f "$sa_path" ]; then
+    err "Service Account JSON topilmadi: $sa_path"
+    return 1
+  fi
+  if [ -z "$package_name" ]; then
+    err "package_name sozlanmagan"
+    return 1
+  fi
+  if [ ! -f "$aab" ]; then
+    err "AAB topilmadi: $aab"
+    return 1
+  fi
+
+  local size_mb sa_email
+  size_mb=$(du -m "$aab" | cut -f1)
+  sa_email=$(sa_json_get_simple "$sa_path" "client_email")
+
+  info "AAB:          $aab (${size_mb} MB)"
+  info "Package:      $package_name"
+  info "Track:        $track"
+  info "Service Acc:  $sa_email"
+  echo
+
+  local api_base="https://androidpublisher.googleapis.com/androidpublisher/v3/applications/${package_name}"
+  local upload_base="https://androidpublisher.googleapis.com/upload/androidpublisher/v3/applications/${package_name}"
+
+  # [1/5] Access token
+  info "[1/5] Access token olinmoqda..."
+  local jwt token
+  jwt=$(play_generate_jwt "$sa_path") || return 1
+  token=$(play_get_access_token "$jwt") || return 1
+  ok "Access token olindi"
+
+  # [2/5] Edit yaratish
+  info "[2/5] Edit yaratilmoqda..."
+  local edit_response edit_id
+  edit_response=$(curl -fsS -X POST "${api_base}/edits" \
+    -H "Authorization: Bearer ${token}" \
+    -H "Content-Type: application/json" \
+    -d '{}' 2>&1) || {
+      err "Edit yaratish xato: $edit_response"
+      return 1
+    }
+  edit_id=$(extract_json_field "$edit_response" "id")
+  if [ -z "$edit_id" ]; then
+    err "edit_id javobdan topilmadi"
+    err "Javob: $edit_response"
+    return 1
+  fi
+  ok "Edit yaratildi: $edit_id"
+
+  # [3/5] AAB yuklash
+  info "[3/5] AAB yuklanmoqda (${size_mb} MB)..."
+  local upload_response version_code
+  upload_response=$(curl -fsS -X POST \
+    "${upload_base}/edits/${edit_id}/bundles?uploadType=media" \
+    -H "Authorization: Bearer ${token}" \
+    -H "Content-Type: application/octet-stream" \
+    --data-binary "@${aab}" 2>&1) || {
+      err "AAB yuklash xato: $upload_response"
+      return 1
+    }
+  version_code=$(extract_json_number "$upload_response" "versionCode")
+  if [ -z "$version_code" ]; then
+    err "versionCode javobdan topilmadi"
+    err "Javob: $upload_response"
+    return 1
+  fi
+  ok "AAB yuklandi, versionCode=$version_code"
+
+  # [4/5] Track'ga qo'shish
+  info "[4/5] Track'ga qo'shilmoqda: $track..."
+  local track_payload track_response
+  track_payload=$(printf '{"releases":[{"versionCodes":["%s"],"status":"completed"}]}' "$version_code")
+  track_response=$(curl -fsS -X PUT \
+    "${api_base}/edits/${edit_id}/tracks/${track}" \
+    -H "Authorization: Bearer ${token}" \
+    -H "Content-Type: application/json" \
+    -d "$track_payload" 2>&1) || {
+      err "Track qo'shish xato: $track_response"
+      return 1
+    }
+  ok "Track'ga qo'shildi: $track"
+
+  # [5/5] Commit
+  info "[5/5] Edit commit qilinmoqda..."
+  local commit_response
+  commit_response=$(curl -fsS -X POST \
+    "${api_base}/edits/${edit_id}:commit" \
+    -H "Authorization: Bearer ${token}" 2>&1) || {
+      err "Commit xato: $commit_response"
+      info "Edit ID: $edit_id (qo'lda Play Console'da tekshirish mumkin)"
+      return 1
+    }
+
+  echo
+  ok "Muvaffaqiyatli yuklandi!"
+  info "Track:       $track"
+  info "versionCode: $version_code"
+  info "Play Console: https://play.google.com/console/u/0/developers/-/app/${package_name}/tracks/${track}"
+  info "Internal track'ga 1-2 daqiqada, beta/production'ga 1-2 soatda paydo bo'ladi"
+  return 0
+}
+
 # ─── Validatsiya ──────────────────────────────────────────
 if [ ! -f "pubspec.yaml" ]; then
   err "pubspec.yaml topilmadi. Skript Flutter loyihasi ildizidan ishga tushishi kerak."
@@ -1019,7 +1434,8 @@ arrow_checkbox "Tanlovlar (Debug = Production yoqilmasa)" \
   "iOS" \
   "flutter clean" \
   "flutter pub get" \
-  "App Store Connect upload (Production + iOS bilan)"
+  "App Store Connect upload (Production + iOS bilan)" \
+  "Play Store upload (Production + Android + AAB bilan)"
 
 IS_PROD="${CHECKBOX_RESULT[0]}"
 BUILD_ANDROID="${CHECKBOX_RESULT[1]}"
@@ -1027,6 +1443,7 @@ BUILD_IOS="${CHECKBOX_RESULT[2]}"
 DO_CLEAN="${CHECKBOX_RESULT[3]}"
 DO_PUBGET="${CHECKBOX_RESULT[4]}"
 DO_APPSTORE_UPLOAD="${CHECKBOX_RESULT[5]}"
+DO_PLAYSTORE_UPLOAD="${CHECKBOX_RESULT[6]}"
 
 if $IS_PROD; then MODE_LABEL="PRODUCTION"; else MODE_LABEL="DEBUG"; fi
 
@@ -1051,6 +1468,17 @@ if $DO_APPSTORE_UPLOAD; then
   fi
 fi
 
+if $DO_PLAYSTORE_UPLOAD; then
+  if ! $IS_PROD; then
+    err "Play Store upload faqat Production rejimda ishlaydi"
+    exit 1
+  fi
+  if ! $BUILD_ANDROID; then
+    err "Play Store upload uchun Android tanlanishi kerak"
+    exit 1
+  fi
+fi
+
 # ─── 2b. Android format tanlovi ───────────────────────────
 BUILD_AAB=false
 BUILD_APK=false
@@ -1063,6 +1491,11 @@ if $BUILD_ANDROID; then
 
   if ! $BUILD_AAB && ! $BUILD_APK; then
     err "Android tanlandi, lekin format tanlanmadi (AAB yoki APK)"
+    exit 1
+  fi
+
+  if $DO_PLAYSTORE_UPLOAD && ! $BUILD_AAB; then
+    err "Play Store upload uchun AAB format tanlanishi kerak (APK qabul qilinmaydi)"
     exit 1
   fi
 fi
@@ -1172,6 +1605,12 @@ if $DO_APPSTORE_UPLOAD; then
   ensure_export_options || { err "ExportOptions.plist sozlanmadi"; exit 1; }
 fi
 
+# ─── 7c. Play Store upload pre-check (Production + Android) ─
+if $DO_PLAYSTORE_UPLOAD; then
+  step "Play Store upload sozlamalarini tekshirish"
+  ensure_play_credentials || { err "Play Store sozlanmadi"; exit 1; }
+fi
+
 # ─── 8. Flutter tayyorlash ────────────────────────────────
 if $DO_CLEAN || $DO_PUBGET; then
   step "Loyiha tayyorlanmoqda"
@@ -1244,6 +1683,15 @@ if $DO_APPSTORE_UPLOAD; then
     exit 1
   }
   upload_to_appstore "$ipa_file" || warn "Upload xato berdi — IPA fayl saqlangan: $ipa_file"
+fi
+
+# ─── 9c. Play Store ga upload ─────────────────────────────
+if $DO_PLAYSTORE_UPLOAD; then
+  aab_file=$(find_latest_aab) || {
+    err "AAB fayl topilmadi build/app/outputs/bundle/release/ ichida"
+    exit 1
+  }
+  upload_to_play_store "$aab_file" || warn "Upload xato berdi — AAB fayl saqlangan: $aab_file"
 fi
 
 # ─── 10. Build natijalarini ochish (macOS/Linux/WSL) ──────
