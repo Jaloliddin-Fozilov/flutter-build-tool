@@ -5,6 +5,40 @@ Loyihaning barcha muhim o'zgarishlari shu faylga yoziladi.
 Format [Keep a Changelog](https://keepachangelog.com/uz/1.1.0/) asosida,
 versiyalash esa [Semantic Versioning](https://semver.org/lang/uz/) qoidasiga rioya qiladi.
 
+## [1.4.0] — 2026-05-14
+
+### Qo'shildi
+
+- **Avtomatik sozlash wizard'lari (iOS va Android)** — Key ID, Issuer ID, JSON
+  yo'lini qo'lda yozish o'rniga, skript brauzerni ochib, fayl yuklanishini
+  kutib, kerakli ma'lumotlarni avtomatik aniqlaydi.
+  - `appstore_setup_wizard` — App Store Connect API Key avtomatik sozlash:
+    - Brauzerda API Keys sahifasi ochiladi
+    - `.p8` fayl Downloads'da paydo bo'lganini polling + spinner bilan kutadi
+    - Fayl nomidan Key ID avtomatik aniqlanadi (`AuthKey_AB12CD34.p8` → `AB12CD34`)
+    - Apple konvensiyasiga muvofiq `~/.appstoreconnect/private_keys/` ga ko'chiriladi
+    - Issuer ID clipboard'dan UUID format'da avtomatik taklif qilinadi
+  - `playstore_setup_wizard` — Google Play Service Account avtomatik sozlash:
+    - 3 ta brauzer sahifasi ketma-ket ochiladi (API library, Service Accounts,
+      Play Console API access)
+    - Yangi yuklangan Service Account JSON `"type": "service_account"`
+      marker bilan filterlanadi
+    - JSON dan `client_email`, `project_id` avtomatik chiqariladi
+    - Package name `build.gradle*` dan avtomatik aniqlanadi
+    - `~/.config/flutter-build-tool/play_store_key.json` ga ko'chiriladi
+- **Yangi yordamchilar**:
+  - `open_url` — brauzerda URL ochish (macOS open, Linux xdg-open, WSL explorer.exe)
+  - `wait_for_download` — Downloads papkasini polling, spinner bilan kutish
+  - `read_clipboard` — macOS pbpaste, Linux xclip/xsel
+- **Sozlash usuli tanlovi**: yangi user'larga ham wizard, ham qo'lda kiritish
+  variantlari ko'rsatiladi (wizard default).
+
+### Talablar
+
+- Mavjud talablar saqlanadi.
+- Linux'da clipboard auto-detect uchun `xclip` yoki `xsel` (ixtiyoriy — bo'lmasa
+  Issuer ID qo'lda kiritiladi).
+
 ## [1.3.0] — 2026-05-14
 
 ### Qo'shildi
@@ -97,6 +131,7 @@ versiyalash esa [Semantic Versioning](https://semver.org/lang/uz/) qoidasiga rio
 - AAB va APK formatlari, Production va Debug rejimlari.
 - Build natijalarini Finder'da avtomatik ochish.
 
+[1.4.0]: https://github.com/Jaloliddin-Fozilov/flutter-build-tool/releases/tag/v1.4.0
 [1.3.0]: https://github.com/Jaloliddin-Fozilov/flutter-build-tool/releases/tag/v1.3.0
 [1.2.0]: https://github.com/Jaloliddin-Fozilov/flutter-build-tool/releases/tag/v1.2.0
 [1.1.0]: https://github.com/Jaloliddin-Fozilov/flutter-build-tool/releases/tag/v1.1.0
