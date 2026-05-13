@@ -5,6 +5,43 @@ Loyihaning barcha muhim o'zgarishlari shu faylga yoziladi.
 Format [Keep a Changelog](https://keepachangelog.com/uz/1.1.0/) asosida,
 versiyalash esa [Semantic Versioning](https://semver.org/lang/uz/) qoidasiga rioya qiladi.
 
+## [1.5.0] — 2026-05-14
+
+### Qo'shildi
+
+- **Per-project konfiguratsiya** — har bir Flutter loyihasi o'z `package_name`
+  (Android) yoki `bundle_id` (iOS) bo'yicha alohida konfiguratsiya saqlaydi.
+  Birinchi marta sozlangach, **hech qachon qayta so'ralmaydi**.
+  - Android: `~/.config/flutter-build-tool/play/<package_name>.json`
+  - iOS: `~/.config/flutter-build-tool/appstore/<bundle_id>.json`
+- **Silent davom etish** — sozlangan loyiha uchun "Shu sozlamalar bilan davom
+  etamizmi?" prompti olib tashlandi. Endi bir qatorli xulosa: `✓ Play Store:
+  com.example.app → internal (saqlangan)`.
+- **Cross-project Service Account / API Key reuse** — yangi loyiha aniqlanganda,
+  boshqa loyihalardan saqlangan kalit avtomatik taklif qilinadi. Foydalanuvchi
+  faqat track yoki tasdiqlash so'raladi.
+- **iOS bundle_id auto-detect** — `ios/Runner.xcodeproj/project.pbxproj`
+  ichidan `PRODUCT_BUNDLE_IDENTIFIER` avtomatik o'qiladi (RunnerTests
+  filtrlanadi).
+- **Legacy config migration** — v1.4.x dagi yagona-fayl konfiguratsiyasi
+  (`play_store.json`, `app_store_connect.json`) avtomatik per-project formatga
+  ko'chiriladi, foydalanuvchi xabarsiz davom etadi.
+
+### O'zgartirildi
+
+- **`setup_*` va wizard funksiyalari endi `package_name`/`bundle_id` argument
+  qabul qiladi** — bu loyiha aralashmasligini ta'minlaydi.
+- **`upload_to_*` funksiyalari per-project config'dan o'qiydi** — current
+  loyihaning sozlamalari ishlatiladi.
+
+### Sizning foydangiz
+
+| Avval (v1.4.x) | Endi (v1.5.0) |
+|----------------|----------------|
+| Har deploy'da "Shu sozlamalar bilan davom etamizmi? (y)" | Silent, bir qator info |
+| Yangi loyihada eski package qayta yoziladi | Yangi loyiha alohida sozlanadi, eskisi saqlanadi |
+| Service Account ko'p loyihada qayta sozlanadi | Mavjud SA avtomatik taklif qilinadi |
+
 ## [1.4.1] — 2026-05-14
 
 ### Tuzatildi
@@ -145,6 +182,7 @@ versiyalash esa [Semantic Versioning](https://semver.org/lang/uz/) qoidasiga rio
 - AAB va APK formatlari, Production va Debug rejimlari.
 - Build natijalarini Finder'da avtomatik ochish.
 
+[1.5.0]: https://github.com/Jaloliddin-Fozilov/flutter-build-tool/releases/tag/v1.5.0
 [1.4.1]: https://github.com/Jaloliddin-Fozilov/flutter-build-tool/releases/tag/v1.4.1
 [1.4.0]: https://github.com/Jaloliddin-Fozilov/flutter-build-tool/releases/tag/v1.4.0
 [1.3.0]: https://github.com/Jaloliddin-Fozilov/flutter-build-tool/releases/tag/v1.3.0
