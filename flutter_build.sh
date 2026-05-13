@@ -22,7 +22,7 @@
 set -eo pipefail
 
 # ─── Skript ma'lumotlari ──────────────────────────────────
-SCRIPT_VERSION="1.4.0"
+SCRIPT_VERSION="1.4.1"
 SCRIPT_REPO="Jaloliddin-Fozilov/flutter-build-tool"
 SCRIPT_RAW_URL="https://raw.githubusercontent.com/${SCRIPT_REPO}/main/flutter_build.sh"
 
@@ -204,7 +204,24 @@ perform_self_update() {
     self=$(realpath "$self" 2>/dev/null || echo "$0")
   fi
 
-  local tmp="${self}.new.$$"
+  local script_dir
+  script_dir=$(dirname "$self")
+
+  # Yozish ruxsatini tekshirish — /usr/local/bin/ kabi tizim joylarida
+  # oddiy foydalanuvchi yozolmaydi. Bunday holda sudo bilan davom etamiz.
+  local needs_sudo=false
+  if [ ! -w "$script_dir" ] || [ ! -w "$self" ]; then
+    needs_sudo=true
+  fi
+
+  # Yuklab olish uchun foydalanuvchi yozadigan vaqtinchalik joy
+  local tmp
+  if $needs_sudo; then
+    tmp="/tmp/flutter_build.new.$$"
+  else
+    tmp="${self}.new.$$"
+  fi
+
   step "Yangi versiya yuklab olinmoqda..."
 
   if ! curl -fsSL --max-time 30 "$SCRIPT_RAW_URL" -o "$tmp"; then
@@ -219,6 +236,36 @@ perform_self_update() {
     return 1
   fi
 
+  if $needs_sudo; then
+    echo
+    warn "Skript tizim direktoriyasida joylashgan: $self"
+    info "Ushbu joyga yozish uchun sudo (administrator paroli) kerak"
+    echo
+    if ! command -v sudo > /dev/null 2>&1; then
+      err "'sudo' topilmadi — qo'lda yangilang:"
+      echo -e "    ${BOLD}cp $tmp $self && chmod +x $self${NC}  (root sifatida)"
+      return 1
+    fi
+
+    info "Sudo bilan o'rnatamiz (parol so'ralishi mumkin)..."
+    if sudo cp "$self" "${self}.bak.$(date +%s)" \
+       && sudo cp "$tmp" "$self" \
+       && sudo chmod +x "$self"; then
+      rm -f "$tmp"
+      ok "Yangilandi! Skriptni qayta ishga tushiring:"
+      echo "    $self"
+      exit 0
+    else
+      err "Sudo bilan o'rnatish xato berdi"
+      info "Qo'lda yangilang:"
+      echo -e "    ${BOLD}sudo cp $tmp $self && sudo chmod +x $self${NC}"
+      info "Yoki to'g'ridan-to'g'ri yuklab oling:"
+      echo -e "    ${BOLD}sudo curl -fsSL ${SCRIPT_RAW_URL} -o $self && sudo chmod +x $self${NC}"
+      return 1
+    fi
+  fi
+
+  # Normal flow — yozish ruxsati mavjud
   cp "$self" "${self}.bak.$(date +%s)"
   mv "$tmp" "$self"
   chmod +x "$self"

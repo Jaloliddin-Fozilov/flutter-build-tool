@@ -5,6 +5,20 @@ Loyihaning barcha muhim o'zgarishlari shu faylga yoziladi.
 Format [Keep a Changelog](https://keepachangelog.com/uz/1.1.0/) asosida,
 versiyalash esa [Semantic Versioning](https://semver.org/lang/uz/) qoidasiga rioya qiladi.
 
+## [1.4.1] — 2026-05-14
+
+### Tuzatildi
+
+- **Auto-update `curl: (56)` xatosi `sudo` o'rnatilgan tizimlarda** — agar skript
+  `/usr/local/bin/` kabi tizim direktoriyasida joylashgan bo'lsa, oddiy
+  foydalanuvchi yozish ruxsatiga ega emas. Avval `curl` "write failed" xatosi
+  bilan yiqilardi (passed 1413 returned 4294967295).
+  - Yangi xulq: yangilashdan oldin skript yozish ruxsatini tekshiradi.
+  - Ruxsat yo'q bo'lsa: faylni `/tmp/` ga yuklab, validate qilib, so'ng `sudo cp`
+    bilan o'rnatadi.
+  - Foydalanuvchi sudo parolini bir marta kiritadi, qolgani avtomatik.
+  - Sudo bo'lmasa yoki bekor qilinsa, aniq qo'lda yangilash buyrug'i ko'rsatiladi.
+
 ## [1.4.0] — 2026-05-14
 
 ### Qo'shildi
@@ -131,6 +145,7 @@ versiyalash esa [Semantic Versioning](https://semver.org/lang/uz/) qoidasiga rio
 - AAB va APK formatlari, Production va Debug rejimlari.
 - Build natijalarini Finder'da avtomatik ochish.
 
+[1.4.1]: https://github.com/Jaloliddin-Fozilov/flutter-build-tool/releases/tag/v1.4.1
 [1.4.0]: https://github.com/Jaloliddin-Fozilov/flutter-build-tool/releases/tag/v1.4.0
 [1.3.0]: https://github.com/Jaloliddin-Fozilov/flutter-build-tool/releases/tag/v1.3.0
 [1.2.0]: https://github.com/Jaloliddin-Fozilov/flutter-build-tool/releases/tag/v1.2.0
