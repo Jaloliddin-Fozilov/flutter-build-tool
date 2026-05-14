@@ -5,6 +5,59 @@ Loyihaning barcha muhim o'zgarishlari shu faylga yoziladi.
 Format [Keep a Changelog](https://keepachangelog.com/uz/1.1.0/) asosida,
 versiyalash esa [Semantic Versioning](https://semver.org/lang/uz/) qoidasiga rioya qiladi.
 
+## [1.10.0] — 2026-05-14
+
+### Qo'shildi — Asosiy menyu va Back navigation
+
+- **Asosiy menyu (`main_menu`)** — `flutter-build` (flag'siz) endi asosiy
+  menyu ko'rsatadi:
+  ```
+  1) 🚀 Build (asosiy oqim)
+  2) ⚙️  Sozlamalar
+  3) 🩺 Doctor (tizim tekshiruvi)
+  4) ⬆️  Android track promotion
+  5) 📊 Rollout foizini oshirish
+  6) 📋 Akkauntlar va loyihalarni ko'rish
+  q) Chiqish
+  ```
+  Barcha funksiyalar bitta joyda — CLI flag yodda saqlash kerak emas.
+- **`arrow_checkbox` cancellation** — endi `q` yoki `Esc` bilan bekor qilinadi.
+  Bekor qilingach `CHECKBOX_CANCELLED=true` o'rnatiladi va asosiy menyu'ga
+  qaytadi.
+- **Back navigation throughout** — har bosqichda foydalanuvchi:
+  - Build menu (checkbox) → `q`/`Esc` → asosiy menyu
+  - Tasdiqlash → `n` → asosiy menyu
+  - Submenular har birida `b) Orqaga`
+  - Asosiy menyu'dan `q` → skript chiqadi
+- **`main_build_flow()` funksiyasi** — avval top-level kod, endi funksiya
+  bilan o'ralgan. Bekor qilishlar va xatolar `return 1` bilan menyu'ga
+  qaytaradi (eski `exit 1` o'rniga).
+- **Interaktiv submenular**:
+  - `menu_promote_interactive` — track promotion (typical workflow'lar)
+  - `menu_rollout_interactive` — rollout foizini oshirish (25/50/75/100/custom)
+  - `menu_view_accounts_and_projects` — barcha sozlangan elementlar ko'rsatish
+
+### Falsafa: State Machine UX
+
+| Avval (linear) | Endi (state machine) |
+|----------------|----------------------|
+| Build flow har doim ishga tushardi | Menyu — foydalanuvchi tanlovi |
+| Xato → script chiqadi | Xato → menyu'ga qaytadi, qayta urinish |
+| Boshqa amallar uchun alohida CLI flag | Hammasi menyu'da |
+| `Ctrl+C` yagona "bekor qilish" | `q`/`Esc`/`b`/`n` — har joyda mantiqiy |
+
+### Foydalanish
+
+\`\`\`bash
+flutter-build              # Asosiy menyu
+flutter-build --settings   # To'g'ridan-to'g'ri sozlamalar
+flutter-build --doctor     # To'g'ridan-to'g'ri diagnostika
+flutter-build --promote-android internal production   # Direct CLI
+\`\`\`
+
+CLI flag'lar **shortcut sifatida saqlanadi** — power user uchun, lekin
+yangi foydalanuvchi menyu orqali hammasini topadi.
+
 ## [1.9.0] — 2026-05-14
 
 ### Qo'shildi — Action-oriented Error Messages
@@ -390,6 +443,7 @@ yangi yo'lni oladi (3 loyiha → 1 ta fayl tahriri).
 - AAB va APK formatlari, Production va Debug rejimlari.
 - Build natijalarini Finder'da avtomatik ochish.
 
+[1.10.0]: https://github.com/Jaloliddin-Fozilov/flutter-build-tool/releases/tag/v1.10.0
 [1.9.0]: https://github.com/Jaloliddin-Fozilov/flutter-build-tool/releases/tag/v1.9.0
 [1.8.0]: https://github.com/Jaloliddin-Fozilov/flutter-build-tool/releases/tag/v1.8.0
 [1.7.0]: https://github.com/Jaloliddin-Fozilov/flutter-build-tool/releases/tag/v1.7.0
