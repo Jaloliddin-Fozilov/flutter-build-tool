@@ -5,6 +5,68 @@ Loyihaning barcha muhim o'zgarishlari shu faylga yoziladi.
 Format [Keep a Changelog](https://keepachangelog.com/uz/1.1.0/) asosida,
 versiyalash esa [Semantic Versioning](https://semver.org/lang/uz/) qoidasiga rioya qiladi.
 
+## [1.8.0] — 2026-05-14
+
+### Qo'shildi — Smart Release Automation (TestFlight-equivalent + ortig'i)
+
+- **Release notes integratsiyasi (Play Store)** — upload bilan birga
+  testerlar 'Yangiliklar' bo'limida ko'radigan matn yuboriladi:
+  - Avtomatik manbalar: `git log -1`, `CHANGELOG.md` oxirgi versiya yozuvi
+  - Qo'lda yozish (`$EDITOR` ochiladi yoki bir qator)
+  - Avtomatik: "Version X.Y.Z released"
+  - 500 belgi cheklov (Play Store qoidasi)
+- **Staged rollout (Play Store production)** — production'ga release'da
+  foydalanuvchilar foizi bilan rollout:
+  - 100% / 50% / 10% / 1% / Custom %
+  - API'da `userFraction` orqali jo'natiladi
+  - `inProgress` status — keyinroq foizni oshirish mumkin
+- **Track promotion CLI**:
+  - `flutter-build --promote-android FROM TO` — bir buyruq bilan track'lar
+    orasida ko'chirish (masalan internal → production)
+  - Interaktiv: argument'larsiz ham ishlaydi, source/target so'raydi
+  - Production'ga promote qilinsa, rollout foizi ham so'raladi
+- **`flutter-build --increase-rollout PCT`** — joriy production rollout
+  foizini oshirish (yoki to'liq 100% ga ko'tarish)
+- **Per-project promotion_flow** — har loyiha o'z promotion strategiyasini
+  config'da saqlaydi:
+  - `internal_to_prod` (default) — Internal → Production
+  - `internal_to_beta_to_prod` — Internal → Beta → Production
+  - `prod_only` — Faqat production (sinovsiz)
+  - `none` — promotion tavsiyasi yo'q
+- **Post-upload promotion taklifi** — upload tugagach, loyihaning
+  promotion_flow asosida keyingi qadam taklif qilinadi
+- **Settings: Loyiha promotion strategiyasi** — settings menyuda har
+  loyiha uchun strategiyani tanlash mumkin
+
+### Yangi funksiyalar
+
+- `collect_release_notes` — interaktiv release notes yig'ish (5 manba)
+- `read_git_last_commit`, `read_changelog_latest` — avtomatik manbalar
+- `truncate_release_notes` — 500 belgi cheklov
+- `escape_for_json` — JSON ichida xavfsiz string (newlines, quotes)
+- `play_list_track_releases` — track'dagi versionCodes
+- `play_promote_release` — bir track'dan boshqasiga ko'chirish
+- `play_suggest_promotion` — post-upload tavsiya
+- `play_increase_rollout` — production rollout foizini oshirish
+- `settings_project_promotion_flow` — settings'da strategiya tanlash
+
+### Texnik foyda — TestFlight bilan parallel
+
+| Bosqich | iOS TestFlight | Android Play Store v1.8.0 |
+|---------|----------------|----------------------------|
+| Upload | `xcrun altool` | Google Play API + release notes |
+| Processing | Apple TestFlight (10-30 min) | Google (1-2 min) |
+| Internal testerlar | Avtomatik | Avtomatik (track=internal) |
+| Release notes | "What to Test" maydoni (manual) | API orqali avtomatik ✓ |
+| Track promotion | TestFlight External (Apple review 24-48h) | API orqali darrov ✓ |
+| Staged rollout | Yo'q | userFraction bilan ✓ |
+
+### Cheklov: iOS "What to Test"
+
+Apple App Store Connect API'sida release notes (whatToTest) yangilash
+**ES256 JWT signing** talab qiladi (Google'ning RS256'sidan farqli).
+Bu v1.9.0 ga ajratildi — alohida release sifatida chiqadi.
+
 ## [1.7.0] — 2026-05-14
 
 ### Qo'shildi
@@ -272,6 +334,7 @@ yangi yo'lni oladi (3 loyiha → 1 ta fayl tahriri).
 - AAB va APK formatlari, Production va Debug rejimlari.
 - Build natijalarini Finder'da avtomatik ochish.
 
+[1.8.0]: https://github.com/Jaloliddin-Fozilov/flutter-build-tool/releases/tag/v1.8.0
 [1.7.0]: https://github.com/Jaloliddin-Fozilov/flutter-build-tool/releases/tag/v1.7.0
 [1.6.0]: https://github.com/Jaloliddin-Fozilov/flutter-build-tool/releases/tag/v1.6.0
 [1.5.0]: https://github.com/Jaloliddin-Fozilov/flutter-build-tool/releases/tag/v1.5.0
