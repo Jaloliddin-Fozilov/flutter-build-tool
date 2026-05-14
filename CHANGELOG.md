@@ -5,6 +5,52 @@ Loyihaning barcha muhim o'zgarishlari shu faylga yoziladi.
 Format [Keep a Changelog](https://keepachangelog.com/uz/1.1.0/) asosida,
 versiyalash esa [Semantic Versioning](https://semver.org/lang/uz/) qoidasiga rioya qiladi.
 
+## [1.7.0] — 2026-05-14
+
+### Qo'shildi
+
+- **Settings menyu** (`flutter-build --settings` yoki `-s`) — oldindan
+  barcha default'larni sozlab qo'yish uchun. Build vaqtida har deploy'da
+  checkbox bosish kerak emas — settings'da yoqilgan tanlovlar oldindan
+  belgilangan holatda ko'rinadi.
+- **Settings bo'limlari**:
+  - **Build defaults** — Production, Android, iOS, format, upload tanlovlari
+    har deploy'da qaysi holatdan boshlash kerakligi
+  - **Akkauntlar** — Play va App Store akkauntlarini ko'rish, qo'shish, o'chirish
+  - **Loyihalar** — sozlangan loyihalar ro'yxati va config'larni boshqarish
+  - **Auto-update** — yoqish/o'chirish va timeout (1-60s)
+  - **iOS Team ID** — ExportOptions.plist avtomatik yaratish uchun
+  - **Joriy sozlamalar** — barcha default'larni jadval shaklida ko'rsatish
+  - **Factory reset** — sozlamalarni boshlang'ich holatga qaytarish
+- **`CHECKBOX_INITIAL` array** — `arrow_checkbox` funksiyasi endi oldindan
+  tanlangan holatdan boshlanishi mumkin (global o'zgaruvchi orqali).
+- **`AUTO_UPDATE_ENABLED` va `AUTO_UPDATE_TIMEOUT`** — `check_for_update`
+  endi settings'dagi qiymatlarni ishlatadi.
+
+### Settings storage
+
+`~/.config/flutter-build-tool/settings.conf` — sourceable `key=value` format:
+
+\`\`\`bash
+DEFAULT_PRODUCTION=true
+DEFAULT_ANDROID=true
+DEFAULT_AAB=true
+DEFAULT_PLAYSTORE_UPLOAD=true
+DEFAULT_ANDROID_TRACK=internal
+DEFAULT_IOS_TEAM_ID=ABC123DEF4
+AUTO_UPDATE_ENABLED=true
+AUTO_UPDATE_TIMEOUT=5
+\`\`\`
+
+### Falsafa: "Defaults, not lockdown"
+
+- Settings'da yoqilgan tanlovlar build menu'da **oldindan belgilangan**
+  holatda ko'rinadi.
+- Foydalanuvchi har deploy'da o'zgartira oladi — settings shunchaki
+  birinchi holatni belgilaydi.
+- **Versiya raqami, build raqami, tasdiqlash** har doim so'raladi — bularni
+  settings'da o'chirib qo'yib bo'lmaydi (xavfsizlik kafolati).
+
 ## [1.6.0] — 2026-05-14
 
 ### Qo'shildi
@@ -226,6 +272,7 @@ yangi yo'lni oladi (3 loyiha → 1 ta fayl tahriri).
 - AAB va APK formatlari, Production va Debug rejimlari.
 - Build natijalarini Finder'da avtomatik ochish.
 
+[1.7.0]: https://github.com/Jaloliddin-Fozilov/flutter-build-tool/releases/tag/v1.7.0
 [1.6.0]: https://github.com/Jaloliddin-Fozilov/flutter-build-tool/releases/tag/v1.6.0
 [1.5.0]: https://github.com/Jaloliddin-Fozilov/flutter-build-tool/releases/tag/v1.5.0
 [1.4.1]: https://github.com/Jaloliddin-Fozilov/flutter-build-tool/releases/tag/v1.4.1
