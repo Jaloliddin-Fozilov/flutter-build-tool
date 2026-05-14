@@ -5,6 +5,62 @@ Loyihaning barcha muhim o'zgarishlari shu faylga yoziladi.
 Format [Keep a Changelog](https://keepachangelog.com/uz/1.1.0/) asosida,
 versiyalash esa [Semantic Versioning](https://semver.org/lang/uz/) qoidasiga rioya qiladi.
 
+## [1.9.0] — 2026-05-14
+
+### Qo'shildi — Action-oriented Error Messages
+
+- **`try_this()` helper** — barcha xato xabarlari uchun bir xil format:
+  ```
+  ✗ Yuklab olib bo'lmadi
+  ℹ Sabab: yozish ruxsati yo'q
+
+    → Buni sinab ko'ring:
+      $ sudo curl ... -o /usr/local/bin/flutter-build
+      $ sudo chmod +x /usr/local/bin/flutter-build
+  ```
+  Foydalanuvchi xatoda **aniq recovery buyrug'ini** ko'radi va clipboard'ga
+  copy-paste qilib darrov hal qila oladi.
+- **`try_this_install()` helper** — platform-aware tavsiya:
+  ```
+  → 'openssl' ni o'rnatish:
+    macOS: brew install openssl@3
+    Linux: sudo apt install openssl
+  ```
+- **`--doctor` flag** (`-d`) — to'liq tizim diagnostikasi:
+  - Asosiy talab'lar: Flutter, bash, curl, git
+  - iOS deploy: xcrun mavjudligi
+  - Android deploy: openssl mavjudligi
+  - Settings: sozlangan akkauntlar, loyihalar
+  - Yozish ruxsati: skript joyi va auto-update kabiliyati
+  - GitHub erishish: live URL tekshiruvi
+  - Loyiha holati: pubspec, Android applicationId, iOS bundle id
+  - Yakuniy xulosa: ✓ Hammasi tayyor / ⚠ ogohlantirish / ✗ kritik muammo
+
+### Yaxshilangan xato xabarlari
+
+- **Auto-update**: yozish ruxsati yo'q bo'lsa `sudo curl` buyrug'i ko'rsatiladi
+- **Tool missing**: `xcrun`, `openssl`, `curl`, `flutter` — har biri platform-aware install buyrug'i bilan
+- **Play Store API**:
+  - HTTP 403 (Forbidden) → "Service Account ruxsatlari" + Play Console URL
+  - HTTP 404 (Not Found) → "birinchi AAB qo'lda yuklanmagan" + console URL
+  - versionCode conflict → "menu'da '+' bosing"
+  - Unsigned APK → "Production checkbox'ini yoqing"
+- **App Store**:
+  - Bundle ID yo'q → App Store Connect URL
+  - Version conflict → `+` qisqartmasi tavsiyasi
+  - Certificate xato → Xcode Settings yo'l
+  - ExportOptions xato → settings'da default Team ID
+
+### Falsafa: "Active errors, not passive"
+
+| Avval (passiv) | Endi (aktiv) |
+|----------------|--------------|
+| `curl: (56) ... topilmadi` | `→ sudo curl <URL> -o <path>` |
+| `xcrun topilmadi` | `→ xcode-select --install` |
+| `versionCode conflict` | `→ flutter-build (menu'da '+' bosing)` |
+
+Foydalanuvchi har xato uchun **aniq keyingi qadamni** biladi.
+
 ## [1.8.0] — 2026-05-14
 
 ### Qo'shildi — Smart Release Automation (TestFlight-equivalent + ortig'i)
@@ -334,6 +390,7 @@ yangi yo'lni oladi (3 loyiha → 1 ta fayl tahriri).
 - AAB va APK formatlari, Production va Debug rejimlari.
 - Build natijalarini Finder'da avtomatik ochish.
 
+[1.9.0]: https://github.com/Jaloliddin-Fozilov/flutter-build-tool/releases/tag/v1.9.0
 [1.8.0]: https://github.com/Jaloliddin-Fozilov/flutter-build-tool/releases/tag/v1.8.0
 [1.7.0]: https://github.com/Jaloliddin-Fozilov/flutter-build-tool/releases/tag/v1.7.0
 [1.6.0]: https://github.com/Jaloliddin-Fozilov/flutter-build-tool/releases/tag/v1.6.0
