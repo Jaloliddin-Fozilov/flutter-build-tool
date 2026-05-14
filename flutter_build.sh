@@ -167,6 +167,120 @@ _yn() {
   if [ "$1" = "true" ]; then printf "${GREEN}✓ yoqilgan${NC}"; else printf "${RED}✗ o'chirilgan${NC}"; fi
 }
 
+# ─── Release notes (testerlar uchun "Yangiliklar") ──────
+
+# Git oxirgi commit message'ni o'qish (multi-line OK)
+read_git_last_commit() {
+  command -v git > /dev/null 2>&1 || return 1
+  git rev-parse --git-dir > /dev/null 2>&1 || return 1
+  # %B = subject + body (full message)
+  git log -1 --pretty=%B 2>/dev/null | head -20
+}
+
+# CHANGELOG.md dan eng yangi versiya yozuvi (## [X.Y.Z] orasidan)
+# Format: Keep a Changelog
+read_changelog_latest() {
+  [ ! -f "CHANGELOG.md" ] && return 1
+  # Birinchi ## [...] dan keyingi ## [...] gacha
+  awk '
+    /^## \[/ { count++; if (count == 1) {next}; if (count == 2) exit }
+    count == 1 { print }
+  ' CHANGELOG.md | head -30
+}
+
+# Matnni Play Store/App Store cheklovlariga qisqartirish
+# Play Store: 500 belgi
+# App Store TestFlight: 4000 belgi (lekin biz 500 belgini ishlatamiz)
+truncate_release_notes() {
+  local text="$1" max="${2:-500}"
+  local len=${#text}
+  if [ "$len" -le "$max" ]; then
+    printf '%s' "$text"
+  else
+    printf '%s…' "${text:0:$((max - 1))}"
+  fi
+}
+
+# JSON ichida xavfsiz string sifatida escape qilish
+# (newlines, quotes, backslash)
+escape_for_json() {
+  local s="$1"
+  # \\, \", \n ni escape qilamiz
+  s="${s//\\/\\\\}"
+  s="${s//\"/\\\"}"
+  s="${s//$'\n'/\\n}"
+  s="${s//$'\r'/}"
+  s="${s//$'\t'/\\t}"
+  printf '%s' "$s"
+}
+
+# Interaktiv release notes yig'ish
+# Argumentlar: version (1.0.24), build (42)
+# Natija: release notes matn (stdout), bo'sh bo'lishi mumkin
+collect_release_notes() {
+  local version="$1" build="$2"
+
+  echo >&2
+  step "Release notes (testerlar 'Yangiliklar' bo'limida ko'radi)" >&2
+  echo >&2
+
+  # Avtomatik manba'larni oldindan ko'rib chiqamiz
+  local git_msg changelog_msg
+  git_msg=$(read_git_last_commit 2>/dev/null || true)
+  changelog_msg=$(read_changelog_latest 2>/dev/null || true)
+
+  echo -e "  ${BOLD}Manba tanlang:${NC}" >&2
+  if [ -n "$git_msg" ]; then
+    info "  ${CYAN}1${NC}) Git oxirgi commit:" >&2
+    # Birinchi qator preview
+    info "        \"$(printf '%s' "$git_msg" | head -1 | cut -c 1-60)\"" >&2
+  fi
+  if [ -n "$changelog_msg" ]; then
+    info "  ${CYAN}2${NC}) CHANGELOG.md oxirgi versiya:" >&2
+    info "        \"$(printf '%s' "$changelog_msg" | grep -m1 -v '^$' | cut -c 1-60)\"" >&2
+  fi
+  info "  ${CYAN}3${NC}) Qo'lda yozish (editor ochiladi yoki bir qator)" >&2
+  info "  ${CYAN}4${NC}) Avtomatik (\"Version ${version} released\")" >&2
+  info "  ${CYAN}5${NC}) Bo'sh qoldirish" >&2
+  echo >&2
+
+  local choice notes
+  read -p "  Tanlang [1-5] [4]: " choice
+  choice="${choice:-4}"
+
+  case "$choice" in
+    1) notes="$git_msg" ;;
+    2) notes="$changelog_msg" ;;
+    3)
+      if [ -n "$EDITOR" ] && command -v "$EDITOR" > /dev/null 2>&1; then
+        local tmp
+        tmp=$(mktemp)
+        echo "# Release notes — bu qatorlar olib tashlanadi" > "$tmp"
+        echo "# Quyida release notes yozing va saqlab chiqing" >> "$tmp"
+        echo "" >> "$tmp"
+        "$EDITOR" "$tmp"
+        notes=$(grep -v '^#' "$tmp")
+        rm -f "$tmp"
+      else
+        info "  (Editor topilmadi — bir qator kiriting)" >&2
+        read -p "    Release notes: " notes
+      fi
+      ;;
+    4) notes="Version ${version} released" ;;
+    5|*) notes="" ;;
+  esac
+
+  # 500 belgi cheklov
+  notes=$(truncate_release_notes "$notes" 500)
+
+  if [ -n "$notes" ]; then
+    info "Release notes:" >&2
+    info "  $(printf '%s' "$notes" | head -3 | sed 's/^/  /')" >&2
+  fi
+
+  printf '%s' "$notes"
+}
+
 # ─── Settings menyulari ─────────────────────────────────
 
 settings_main_menu() {
@@ -417,15 +531,88 @@ settings_projects_menu() {
 
   echo
   echo -e "  ${BOLD}Amallar:${NC}"
+  echo -e "    ${CYAN}f${NC}) Loyiha promotion strategiyasini tanlash"
   echo -e "    ${CYAN}d${NC}) Loyiha config'ini o'chirish (qayta sozlash uchun)"
   echo -e "    ${CYAN}b${NC}) Orqaga"
   echo
-  read -p "  Tanlang [d, b]: " choice
+  read -p "  Tanlang [f, d, b]: " choice
 
   case "$choice" in
+    f|F) settings_project_promotion_flow ;;
     d|D) settings_delete_project ;;
     *)   return 0 ;;
   esac
+}
+
+# Loyiha promotion strategiyasini tanlash
+settings_project_promotion_flow() {
+  banner "Loyiha promotion strategiyasi"
+
+  # Mavjud Android loyihalar
+  local projects=()
+  local dir
+  dir=$(play_projects_dir)
+  if [ -d "$dir" ]; then
+    local f pkg
+    for f in "$dir"/*.json; do
+      [ -f "$f" ] || continue
+      pkg=$(basename "$f" .json)
+      projects+=("$pkg")
+    done
+  fi
+
+  if [ ${#projects[@]} -eq 0 ]; then
+    warn "Sozlangan Android loyihalar yo'q"
+    echo
+    read -p "  Davom etish uchun Enter..." _
+    return 0
+  fi
+
+  echo
+  info "Loyihani tanlang (faqat Android):"
+  local i=1 p
+  for p in "${projects[@]}"; do
+    local cur_flow
+    cur_flow=$(play_project_config_get "$p" "promotion_flow")
+    printf "    ${CYAN}%d${NC}) %-30s [hozir: ${YELLOW}%s${NC}]\n" "$i" "$p" "${cur_flow:-internal_to_prod}"
+    i=$((i + 1))
+  done
+  printf "    ${CYAN}%d${NC}) Bekor qilish\n" "$i"
+  echo
+  read -p "  Tanlang [1-${i}]: " pick
+
+  if ! [[ "$pick" =~ ^[0-9]+$ ]] || [ "$pick" -lt 1 ] || [ "$pick" -gt "${#projects[@]}" ]; then
+    return 0
+  fi
+  local target="${projects[$((pick - 1))]}"
+
+  echo
+  echo -e "  ${BOLD}Promotion strategiyani tanlang:${NC}"
+  echo -e "    ${CYAN}1${NC}) ${BOLD}internal_to_prod${NC}         — Internal → Production (default)"
+  echo -e "    ${CYAN}2${NC}) ${BOLD}internal_to_beta_to_prod${NC} — Internal → Beta → Production (3 bosqich)"
+  echo -e "    ${CYAN}3${NC}) ${BOLD}prod_only${NC}                — Faqat Production (sinovsiz)"
+  echo -e "    ${CYAN}4${NC}) ${BOLD}none${NC}                     — Promotion tavsiyasi yo'q"
+  echo
+  read -p "  Tanlang [1-4]: " flow_pick
+
+  local flow
+  case "$flow_pick" in
+    1) flow="internal_to_prod" ;;
+    2) flow="internal_to_beta_to_prod" ;;
+    3) flow="prod_only" ;;
+    4) flow="none" ;;
+    *) warn "Bekor qilindi"; return 0 ;;
+  esac
+
+  # Joriy sozlamalarni o'qib qayta yozish (account va track saqlanadi)
+  local account track
+  account=$(play_project_config_get "$target" "account")
+  track=$(play_project_config_get "$target" "track")
+  play_project_config_save "$target" "$account" "${track:-internal}" "$flow"
+  ok "Loyiha '${target}' promotion strategiyasi: ${flow}"
+
+  echo
+  read -p "  Davom etish uchun Enter..." _
 }
 
 settings_delete_project() {
@@ -778,13 +965,37 @@ perform_self_update() {
 # ─── Argumentlarni tahlil qilish ──────────────────────────
 SKIP_UPDATE=false
 SETTINGS_MODE=false
-for arg in "$@"; do
+PROMOTE_MODE=false
+PROMOTE_FROM=""
+PROMOTE_TO=""
+INCREASE_ROLLOUT_MODE=false
+INCREASE_ROLLOUT_PCT=""
+i=0
+args=("$@")
+while [ "$i" -lt "${#args[@]}" ]; do
+  arg="${args[$i]}"
   case "$arg" in
     --no-update-check|--skip-update)
       SKIP_UPDATE=true
       ;;
     --settings|-s)
       SETTINGS_MODE=true
+      ;;
+    --promote-android)
+      PROMOTE_MODE=true
+      # Keyingi 2 ta argument: from to (ixtiyoriy — bo'lmasa interaktiv so'raydi)
+      if [ "$((i + 1))" -lt "${#args[@]}" ] && [ "$((i + 2))" -lt "${#args[@]}" ]; then
+        PROMOTE_FROM="${args[$((i + 1))]}"
+        PROMOTE_TO="${args[$((i + 2))]}"
+        i=$((i + 2))
+      fi
+      ;;
+    --increase-rollout)
+      INCREASE_ROLLOUT_MODE=true
+      if [ "$((i + 1))" -lt "${#args[@]}" ]; then
+        INCREASE_ROLLOUT_PCT="${args[$((i + 1))]}"
+        i=$((i + 1))
+      fi
       ;;
     --version|-v)
       echo "${SCRIPT_VERSION}"
@@ -795,17 +1006,22 @@ for arg in "$@"; do
 Flutter Build Tool v${SCRIPT_VERSION}
 
 Foydalanish:
-  ./flutter_build.sh                    Interaktiv build
-  ./flutter_build.sh --settings, -s     Sozlamalar menyusi (default'larni oldindan)
-  ./flutter_build.sh --version          Versiyani ko'rsatish
-  ./flutter_build.sh --no-update-check  Yangilanish tekshiruvisiz ishga tushirish
-  ./flutter_build.sh --help             Bu ma'lumot
+  ./flutter_build.sh                              Interaktiv build
+  ./flutter_build.sh --settings, -s               Sozlamalar menyusi
+  ./flutter_build.sh --promote-android FROM TO    Track promotion (Android)
+                                                  Misol: --promote-android internal production
+  ./flutter_build.sh --increase-rollout PCT       Production rollout foizini oshirish
+                                                  Misol: --increase-rollout 50
+  ./flutter_build.sh --version, -v                Versiyani ko'rsatish
+  ./flutter_build.sh --no-update-check            Yangilanish tekshiruvisiz
+  ./flutter_build.sh --help, -h                   Bu ma'lumot
 
 Repo: https://github.com/${SCRIPT_REPO}
 EOF
       exit 0
       ;;
   esac
+  i=$((i + 1))
 done
 
 # Settings'ni yuklash (har doim — build flow va settings menyu ham ishlatadi)
@@ -818,6 +1034,55 @@ $SKIP_UPDATE || check_for_update
 if $SETTINGS_MODE; then
   settings_main_menu
   exit 0
+fi
+
+# Track promotion rejimi (--promote-android)
+if $PROMOTE_MODE; then
+  if [ ! -f "pubspec.yaml" ]; then
+    err "pubspec.yaml topilmadi (Flutter loyihasi ildizidan ishga tushiring)"
+    exit 1
+  fi
+  if [ -z "$PROMOTE_FROM" ] || [ -z "$PROMOTE_TO" ]; then
+    # Interaktiv tanlash
+    banner "Android Play Store track promotion"
+    info "Track'lar: internal, alpha, beta, production"
+    echo
+    read -p "  Source track: " PROMOTE_FROM
+    read -p "  Target track: " PROMOTE_TO
+  fi
+  if ! [[ "$PROMOTE_FROM" =~ ^(internal|alpha|beta|production)$ ]]; then
+    err "Noto'g'ri source track: $PROMOTE_FROM"
+    exit 1
+  fi
+  if ! [[ "$PROMOTE_TO" =~ ^(internal|alpha|beta|production)$ ]]; then
+    err "Noto'g'ri target track: $PROMOTE_TO"
+    exit 1
+  fi
+  # Production'ga ko'chirilsa, rollout so'raymiz
+  fraction="1.0"
+  if [ "$PROMOTE_TO" = "production" ]; then
+    echo
+    read -p "  Production rollout (1-100%) [10]: " pct
+    pct="${pct:-10}"
+    if [[ "$pct" =~ ^[0-9]+$ ]] && [ "$pct" -ge 1 ] && [ "$pct" -le 100 ]; then
+      fraction=$(awk "BEGIN{printf \"%.4f\", $pct / 100}")
+    fi
+  fi
+  play_promote_release "$PROMOTE_FROM" "$PROMOTE_TO" "$fraction"
+  exit $?
+fi
+
+# Increase rollout rejimi (--increase-rollout)
+if $INCREASE_ROLLOUT_MODE; then
+  if [ ! -f "pubspec.yaml" ]; then
+    err "pubspec.yaml topilmadi"
+    exit 1
+  fi
+  if [ -z "$INCREASE_ROLLOUT_PCT" ]; then
+    read -p "  Yangi rollout foizi (1-100): " INCREASE_ROLLOUT_PCT
+  fi
+  play_increase_rollout "$INCREASE_ROLLOUT_PCT"
+  exit $?
 fi
 
 # ─── Arrow-key checkbox menyusi ───────────────────────────
@@ -1929,8 +2194,13 @@ play_project_config_get() {
 }
 
 # Loyiha konfiguratsiyasini saqlash (v1.6.0: account nomi orqali havola)
+# v1.8.0: promotion_flow qo'shildi — qaysi tartibda promote qilish kerakligi
+#   - "internal_to_prod"           — internal → production (default)
+#   - "internal_to_beta_to_prod"   — internal → beta → production
+#   - "prod_only"                  — faqat production (sinovsiz)
+#   - "none"                       — promotion tavsiya etilmaydi
 play_project_config_save() {
-  local pkg="$1" account="$2" track="$3"
+  local pkg="$1" account="$2" track="$3" promotion_flow="${4:-internal_to_prod}"
   local file dir
   file=$(play_project_config_file "$pkg")
   dir=$(dirname "$file")
@@ -1940,7 +2210,8 @@ play_project_config_save() {
 {
   "account": "${account}",
   "package_name": "${pkg}",
-  "track": "${track}"
+  "track": "${track}",
+  "promotion_flow": "${promotion_flow}"
 }
 JSON
   chmod 600 "$file"
@@ -2529,6 +2800,212 @@ ensure_play_credentials() {
   play_pick_account_for_project "$current_pkg" || return 1
 }
 
+# ─── v1.8.0: Track promotion va rollout boshqaruvi ─────
+
+# Track'dagi joriy release'larni olish. Natija: "versionCode versionName" qatorlar.
+play_list_track_releases() {
+  local token="$1" package_name="$2" track="$3"
+  local response
+  response=$(curl -fsS \
+    "https://androidpublisher.googleapis.com/androidpublisher/v3/applications/${package_name}/tracks/${track}" \
+    -H "Authorization: Bearer ${token}" 2>/dev/null)
+  [ -z "$response" ] && return 1
+  # Faqat versionCodes ni chiqaramiz (oddiy parsing)
+  printf '%s' "$response" | grep -oE '"versionCodes":[[:space:]]*\[[^]]+\]' | head -1 \
+    | grep -oE '"[0-9]+"' | tr -d '"'
+}
+
+# Track promotion: bir track'dan boshqasiga ko'chirish
+# Argumentlar: from_track, to_track, user_fraction (optional, default 1.0)
+play_promote_release() {
+  local from_track="$1" to_track="$2" user_fraction="${3:-1.0}"
+
+  # Loyihaning package_name'i va akkauntini aniqlash
+  local package_name account sa_path
+  package_name=$(detect_android_package_name)
+  if [ -z "$package_name" ]; then
+    err "Android applicationId aniqlanmadi"
+    return 1
+  fi
+
+  account=$(play_project_config_get "$package_name" "account")
+  if [ -z "$account" ] || ! play_account_exists "$account"; then
+    err "Loyiha '${package_name}' uchun akkaunt sozlanmagan"
+    return 1
+  fi
+
+  sa_path=$(play_account_get "$account" "service_account_path")
+  if [ ! -f "$sa_path" ]; then
+    err "Service Account JSON yo'qolgan: $sa_path"
+    return 1
+  fi
+
+  step "Track promotion: ${from_track} → ${to_track}"
+
+  # Access token
+  info "[1/4] Access token olinmoqda..."
+  local jwt token
+  jwt=$(play_generate_jwt "$sa_path") || return 1
+  token=$(play_get_access_token "$jwt") || return 1
+
+  # Source track'dagi versionCodes
+  info "[2/4] ${from_track} track release'lari o'qilmoqda..."
+  local version_codes
+  version_codes=$(play_list_track_releases "$token" "$package_name" "$from_track")
+  if [ -z "$version_codes" ]; then
+    err "${from_track} track'da release topilmadi"
+    return 1
+  fi
+  # Bir nechta versionCode bo'lsa, eng kattasini olamiz
+  local latest_vc
+  latest_vc=$(echo "$version_codes" | sort -n | tail -1)
+  ok "Topildi: versionCode=${latest_vc}"
+
+  # Edit yaratish
+  info "[3/4] Edit yaratilmoqda..."
+  local api_base="https://androidpublisher.googleapis.com/androidpublisher/v3/applications/${package_name}"
+  local edit_id
+  edit_id=$(curl -fsS -X POST "${api_base}/edits" \
+    -H "Authorization: Bearer ${token}" -d '{}' 2>/dev/null \
+    | extract_json_field /dev/stdin "id" 2>/dev/null)
+  # ^ Hack: extract_json_field stdout dan o'qiy olmaydi, qayta ishlatamiz:
+  local edit_response
+  edit_response=$(curl -fsS -X POST "${api_base}/edits" \
+    -H "Authorization: Bearer ${token}" -d '{}' 2>&1)
+  edit_id=$(extract_json_field "$edit_response" "id")
+  [ -z "$edit_id" ] && { err "Edit yaratish xato"; return 1; }
+
+  # Target track'ga qo'shish
+  info "[4/4] ${to_track} track'ga qo'shilmoqda..."
+  local release_status="completed" user_fraction_json=""
+  if [ "$to_track" = "production" ] && [ "$user_fraction" != "1.0" ] && [ "$user_fraction" != "1" ]; then
+    release_status="inProgress"
+    user_fraction_json=",\"userFraction\":${user_fraction}"
+  fi
+  local payload
+  payload="{\"releases\":[{\"versionCodes\":[\"${latest_vc}\"],\"status\":\"${release_status}\"${user_fraction_json}}]}"
+
+  curl -fsS -X PUT "${api_base}/edits/${edit_id}/tracks/${to_track}" \
+    -H "Authorization: Bearer ${token}" -H "Content-Type: application/json" \
+    -d "$payload" > /dev/null 2>&1 || { err "Track qo'shish xato"; return 1; }
+
+  # Commit
+  curl -fsS -X POST "${api_base}/edits/${edit_id}:commit" \
+    -H "Authorization: Bearer ${token}" > /dev/null 2>&1 || { err "Commit xato"; return 1; }
+
+  echo
+  ok "Promote qilindi: ${from_track} (v${latest_vc}) → ${to_track}"
+  if [ -n "$user_fraction_json" ]; then
+    info "Rollout: $(awk "BEGIN{printf \"%.0f\", $user_fraction * 100}")%"
+  fi
+}
+
+# Post-upload promotion taklifi (per-project flow asosida)
+play_suggest_promotion() {
+  local pkg="$1" current_track="$2"
+  local flow
+  flow=$(play_project_config_get "$pkg" "promotion_flow")
+  flow="${flow:-internal_to_prod}"
+
+  # Tavsiya etiladigan keyingi track
+  local next_track=""
+  case "$flow" in
+    internal_to_prod)
+      [ "$current_track" = "internal" ] && next_track="production"
+      ;;
+    internal_to_beta_to_prod)
+      [ "$current_track" = "internal" ] && next_track="beta"
+      [ "$current_track" = "beta" ] && next_track="production"
+      ;;
+    prod_only|none)
+      return 0
+      ;;
+  esac
+
+  [ -z "$next_track" ] && return 0
+
+  echo
+  info "Loyihangiz promotion strategiyasi: ${BOLD}${flow}${NC}"
+  info "Keyingi qadam: ${current_track} → ${BOLD}${next_track}${NC}"
+  echo
+  read -p "  Hozir promote qilamizmi? (y/n) [n]: " do_promote
+  if [[ "$do_promote" =~ ^[Yy]$ ]]; then
+    local user_fraction="1.0"
+    if [ "$next_track" = "production" ]; then
+      echo
+      read -p "  Production rollout (1-100%) [10]: " pct
+      pct="${pct:-10}"
+      if [[ "$pct" =~ ^[0-9]+$ ]] && [ "$pct" -ge 1 ] && [ "$pct" -le 100 ]; then
+        user_fraction=$(awk "BEGIN{printf \"%.4f\", $pct / 100}")
+      fi
+    fi
+    play_promote_release "$current_track" "$next_track" "$user_fraction"
+  fi
+}
+
+# Production rollout foizini oshirish (in-progress release'ni)
+play_increase_rollout() {
+  local new_pct="$1"
+
+  if ! [[ "$new_pct" =~ ^[0-9]+$ ]] || [ "$new_pct" -lt 1 ] || [ "$new_pct" -gt 100 ]; then
+    err "Foiz 1-100 oralig'ida bo'lishi kerak"
+    return 1
+  fi
+
+  local package_name account sa_path
+  package_name=$(detect_android_package_name)
+  account=$(play_project_config_get "$package_name" "account")
+  if [ -z "$account" ] || ! play_account_exists "$account"; then
+    err "Loyiha sozlanmagan"
+    return 1
+  fi
+  sa_path=$(play_account_get "$account" "service_account_path")
+
+  step "Production rollout: ${new_pct}% ga oshiriladi"
+
+  local jwt token
+  jwt=$(play_generate_jwt "$sa_path") || return 1
+  token=$(play_get_access_token "$jwt") || return 1
+
+  local api_base="https://androidpublisher.googleapis.com/androidpublisher/v3/applications/${package_name}"
+
+  # Joriy production releaseni olish
+  local version_codes
+  version_codes=$(play_list_track_releases "$token" "$package_name" "production")
+  if [ -z "$version_codes" ]; then
+    err "Production track'da release topilmadi"
+    return 1
+  fi
+  local latest_vc
+  latest_vc=$(echo "$version_codes" | sort -n | tail -1)
+
+  # Edit + PATCH
+  local edit_response edit_id
+  edit_response=$(curl -fsS -X POST "${api_base}/edits" \
+    -H "Authorization: Bearer ${token}" -d '{}' 2>&1)
+  edit_id=$(extract_json_field "$edit_response" "id")
+  [ -z "$edit_id" ] && { err "Edit yaratish xato"; return 1; }
+
+  local fraction
+  fraction=$(awk "BEGIN{printf \"%.4f\", $new_pct / 100}")
+  local release_status="inProgress"
+  [ "$new_pct" -eq 100 ] && release_status="completed"
+
+  local payload
+  payload="{\"releases\":[{\"versionCodes\":[\"${latest_vc}\"],\"status\":\"${release_status}\""
+  [ "$release_status" = "inProgress" ] && payload="${payload},\"userFraction\":${fraction}"
+  payload="${payload}}]}"
+
+  curl -fsS -X PUT "${api_base}/edits/${edit_id}/tracks/production" \
+    -H "Authorization: Bearer ${token}" -H "Content-Type: application/json" \
+    -d "$payload" > /dev/null 2>&1 || { err "Track yangilash xato"; return 1; }
+
+  curl -fsS -X POST "${api_base}/edits/${edit_id}:commit" \
+    -H "Authorization: Bearer ${token}" > /dev/null 2>&1 || { err "Commit xato"; return 1; }
+
+  ok "Production rollout endi ${new_pct}% (versionCode=${latest_vc})"
+}
+
 # Build natijasidan AAB faylini topish
 find_latest_aab() {
   local dir="build/app/outputs/bundle/release"
@@ -2609,6 +3086,12 @@ upload_to_play_store() {
   info "Package:      $package_name"
   info "Track:        $track"
   info "Service Acc:  $sa_email"
+  if [ -n "$RELEASE_NOTES" ]; then
+    info "Release notes: ${RELEASE_NOTES:0:60}…"
+  fi
+  if [ -n "$STAGED_ROLLOUT_FRACTION" ]; then
+    info "Staged rollout: $(awk "BEGIN{printf \"%.0f\", $STAGED_ROLLOUT_FRACTION * 100}")% foydalanuvchiga"
+  fi
   echo
 
   local api_base="https://androidpublisher.googleapis.com/androidpublisher/v3/applications/${package_name}"
@@ -2658,10 +3141,30 @@ upload_to_play_store() {
   fi
   ok "AAB yuklandi, versionCode=$version_code"
 
-  # [4/5] Track'ga qo'shish
+  # [4/5] Track'ga qo'shish (release notes + staged rollout bilan)
   info "[4/5] Track'ga qo'shilmoqda: $track..."
+
+  # release_notes_json va status'ni qo'shamiz
+  local release_notes_json="" release_status="completed" user_fraction_json=""
+
+  # Release notes — agar belgilangan bo'lsa, en-US default tilda yuboramiz
+  if [ -n "$RELEASE_NOTES" ]; then
+    local escaped
+    escaped=$(escape_for_json "$RELEASE_NOTES")
+    release_notes_json=",\"releaseNotes\":[{\"language\":\"en-US\",\"text\":\"${escaped}\"}]"
+  fi
+
+  # Staged rollout — faqat production track uchun ma'noli
+  if [ "$track" = "production" ] && [ -n "$STAGED_ROLLOUT_FRACTION" ]; then
+    if [ "$STAGED_ROLLOUT_FRACTION" != "1.0" ] && [ "$STAGED_ROLLOUT_FRACTION" != "1" ]; then
+      release_status="inProgress"
+      user_fraction_json=",\"userFraction\":${STAGED_ROLLOUT_FRACTION}"
+    fi
+  fi
+
   local track_payload track_response
-  track_payload=$(printf '{"releases":[{"versionCodes":["%s"],"status":"completed"}]}' "$version_code")
+  track_payload="{\"releases\":[{\"versionCodes\":[\"${version_code}\"],\"status\":\"${release_status}\"${user_fraction_json}${release_notes_json}}]}"
+
   track_response=$(curl -fsS -X PUT \
     "${api_base}/edits/${edit_id}/tracks/${track}" \
     -H "Authorization: Bearer ${token}" \
@@ -2670,7 +3173,7 @@ upload_to_play_store() {
       err "Track qo'shish xato: $track_response"
       return 1
     }
-  ok "Track'ga qo'shildi: $track"
+  ok "Track'ga qo'shildi: $track${user_fraction_json:+ (staged rollout)}"
 
   # [5/5] Commit
   info "[5/5] Edit commit qilinmoqda..."
@@ -3040,7 +3543,50 @@ if $DO_PLAYSTORE_UPLOAD; then
     err "AAB fayl topilmadi build/app/outputs/bundle/release/ ichida"
     exit 1
   }
+
+  # Release notes yig'ish (har upload uchun yangi)
+  RELEASE_NOTES=$(collect_release_notes "$new_pname" "$new_pbuild")
+
+  # Staged rollout — agar production track tanlangan bo'lsa
+  STAGED_ROLLOUT_FRACTION=""
+  current_pkg_for_upload=$(detect_android_package_name)
+  current_track=$(play_project_config_get "$current_pkg_for_upload" "track")
+  if [ "$current_track" = "production" ]; then
+    echo
+    info "Production track tanlandi — staged rollout"
+    echo -e "  ${BOLD}Foydalanuvchilarga foiz bilan release:${NC}"
+    echo -e "    ${CYAN}1${NC}) 100%  — barchaga darrov (default)"
+    echo -e "    ${CYAN}2${NC}) 50%   — yarmiga"
+    echo -e "    ${CYAN}3${NC}) 10%   — sinov uchun (keyinroq oshirish mumkin)"
+    echo -e "    ${CYAN}4${NC}) 1%    — minimal sinov"
+    echo -e "    ${CYAN}5${NC}) Custom %"
+    echo
+    read -p "  Tanlang [1-5] [1]: " roll_choice
+    case "${roll_choice:-1}" in
+      1) STAGED_ROLLOUT_FRACTION="1.0" ;;
+      2) STAGED_ROLLOUT_FRACTION="0.5" ;;
+      3) STAGED_ROLLOUT_FRACTION="0.1" ;;
+      4) STAGED_ROLLOUT_FRACTION="0.01" ;;
+      5)
+        read -p "    Foiz (1-100): " custom_pct
+        if [[ "$custom_pct" =~ ^[0-9]+$ ]] && [ "$custom_pct" -ge 1 ] && [ "$custom_pct" -le 100 ]; then
+          STAGED_ROLLOUT_FRACTION=$(awk "BEGIN{printf \"%.4f\", $custom_pct / 100}")
+        else
+          warn "Noto'g'ri foiz, 100% ishlatamiz"
+          STAGED_ROLLOUT_FRACTION="1.0"
+        fi
+        ;;
+      *) STAGED_ROLLOUT_FRACTION="1.0" ;;
+    esac
+    ok "Rollout: $(awk "BEGIN{printf \"%.0f\", $STAGED_ROLLOUT_FRACTION * 100}")%"
+  fi
+
   upload_to_play_store "$aab_file" || warn "Upload xato berdi — AAB fayl saqlangan: $aab_file"
+
+  # Post-upload: per-project promotion_flow ga binoan keyingi qadam taklif qilish
+  if [ "$current_track" != "production" ]; then
+    play_suggest_promotion "$current_pkg_for_upload" "$current_track"
+  fi
 fi
 
 # ─── 10. Build natijalarini ochish (macOS/Linux/WSL) ──────
