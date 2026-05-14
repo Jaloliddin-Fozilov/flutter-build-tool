@@ -5,6 +5,27 @@ Loyihaning barcha muhim o'zgarishlari shu faylga yoziladi.
 Format [Keep a Changelog](https://keepachangelog.com/uz/1.1.0/) asosida,
 versiyalash esa [Semantic Versioning](https://semver.org/lang/uz/) qoidasiga rioya qiladi.
 
+## [1.10.1] — 2026-05-14
+
+### Tuzatildi
+
+- **Arrow key xato (↑/↓ ishlamaslik)** — `arrow_checkbox` da v1.10.0 da
+  qo'shilgan `read -rsn2 -t 0.1` macOS bash 3.2 da "invalid timeout
+  specification" deydi (decimal timeout qabul qilmaydi). Natijada arrow
+  key sequence (`\x1b[B` va h.k.) to'liq o'qilmasdan, "Esc detected"
+  sifatida talqin qilinardi va menu darrov bekor qilinardi.
+  - Yechim: `-t 1` (integer timeout) ga qaytarildi (eski v1.9.0 xulqi)
+  - Esc cancellation logikasi olib tashlandi — faqat `q` cancel'ni
+    qo'llab-quvvatlaydi
+  - Help text yangilandi: `q bekor` (avval `q/Esc bekor`)
+- **Texnik tafsilot**: bash 3.2 `man bash`:
+  ```
+  -t timeout: Cause read to time out... timeout may be a decimal
+  number with a fractional portion following the decimal point.
+  ```
+  Lekin amalda macOS bash 3.2 decimal qabul qilmaydi va xato beradi.
+  Integer ishonchli ishlaydi.
+
 ## [1.10.0] — 2026-05-14
 
 ### Qo'shildi — Asosiy menyu va Back navigation
@@ -443,6 +464,7 @@ yangi yo'lni oladi (3 loyiha → 1 ta fayl tahriri).
 - AAB va APK formatlari, Production va Debug rejimlari.
 - Build natijalarini Finder'da avtomatik ochish.
 
+[1.10.1]: https://github.com/Jaloliddin-Fozilov/flutter-build-tool/releases/tag/v1.10.1
 [1.10.0]: https://github.com/Jaloliddin-Fozilov/flutter-build-tool/releases/tag/v1.10.0
 [1.9.0]: https://github.com/Jaloliddin-Fozilov/flutter-build-tool/releases/tag/v1.9.0
 [1.8.0]: https://github.com/Jaloliddin-Fozilov/flutter-build-tool/releases/tag/v1.8.0

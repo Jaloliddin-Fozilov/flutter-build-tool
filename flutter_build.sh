@@ -22,7 +22,7 @@
 set -eo pipefail
 
 # ─── Skript ma'lumotlari ──────────────────────────────────
-SCRIPT_VERSION="1.10.0"
+SCRIPT_VERSION="1.10.1"
 SCRIPT_REPO="Jaloliddin-Fozilov/flutter-build-tool"
 SCRIPT_RAW_URL="https://raw.githubusercontent.com/${SCRIPT_REPO}/main/flutter_build.sh"
 
@@ -1613,7 +1613,7 @@ arrow_checkbox() {
 
   echo
   echo -e "${BOLD}${BLUE}▶${NC} ${BOLD}${title}${NC}"
-  echo -e "  ${CYAN}↑/↓${NC} harakat   ${CYAN}Space${NC} tanlash   ${CYAN}Enter${NC} tasdiqlash   ${CYAN}q${NC}/${CYAN}Esc${NC} bekor"
+  echo -e "  ${CYAN}↑/↓${NC} harakat   ${CYAN}Space${NC} tanlash   ${CYAN}Enter${NC} tasdiqlash   ${CYAN}q${NC} bekor"
   echo
 
   tput civis 2>/dev/null
@@ -1665,13 +1665,12 @@ arrow_checkbox() {
         break
         ;;
       $'\x1b')
-        # Esc yoki strelka
-        IFS= read -rsn2 -t 0.1 rest 2>/dev/null || rest=""
-        if [ -z "$rest" ]; then
-          # Sof Esc — bekor qilish
-          CHECKBOX_CANCELLED=true
-          break
-        fi
+        # Strelka tugmasi (terminal yuboradi: \x1b[A va h.k.)
+        # Note: sof Esc'ni bekor qilish sifatida tushunmaymiz, chunki
+        # bash 3.2 (macOS) da decimal timeout reliable emas va arrow
+        # key sequence to'g'ri o'qilishi uchun -t 1 kerak. Cancellation
+        # uchun 'q' tugmasini ishlating.
+        IFS= read -rsn2 -t 1 rest 2>/dev/null || rest=""
         case "$rest" in
           "[A") cursor=$((cursor - 1)); [ "$cursor" -lt 0 ] && cursor=$((n - 1)) ;;
           "[B") cursor=$((cursor + 1)); [ "$cursor" -ge "$n" ] && cursor=0 ;;
