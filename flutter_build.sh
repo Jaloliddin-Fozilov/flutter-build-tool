@@ -22,7 +22,7 @@
 set -eo pipefail
 
 # ─── Skript ma'lumotlari ──────────────────────────────────
-SCRIPT_VERSION="1.10.1"
+SCRIPT_VERSION="1.11.0"
 SCRIPT_REPO="Jaloliddin-Fozilov/flutter-build-tool"
 SCRIPT_RAW_URL="https://raw.githubusercontent.com/${SCRIPT_REPO}/main/flutter_build.sh"
 
@@ -3729,6 +3729,250 @@ upload_to_play_store() {
   return 0
 }
 
+# ─── v1.11.0: Bosqichma-bosqich (wizard) build pickers ─────
+# Har bosqich quyidagi qaytadi:
+#   0 — keyingi bosqichga o'tish
+#   1 — orqaga (yoki bekor qilish)
+# Bog'liq tanlovlar avtomatik kontekst asosida ko'rsatiladi.
+
+# [1/5] Build rejimi (radio — Production / Debug)
+menu_pick_build_mode() {
+  echo
+  step "[1/5] Build rejimi"
+  echo
+  echo -e "  ${BOLD}Qaysi rejim bilan build qilamiz?${NC}"
+  echo -e "    ${CYAN}1${NC}) ${BOLD}🚀 Production${NC}  — release, signed (Play/App Store uchun)"
+  echo -e "    ${CYAN}2${NC}) ${BOLD}🔧 Debug${NC}      — test build, signing yo'q"
+  echo -e "    ${CYAN}b${NC}) Orqaga (asosiy menyu)"
+  echo
+
+  # Settings'dan default
+  local default_choice="2"
+  [ "$DEFAULT_PRODUCTION" = "true" ] && default_choice="1"
+
+  read -p "  Tanlang [1-2, b] [${default_choice}]: " choice
+  choice="${choice:-$default_choice}"
+
+  case "$choice" in
+    1) IS_PROD=true;  MODE_LABEL="PRODUCTION"; return 0 ;;
+    2) IS_PROD=false; MODE_LABEL="DEBUG";      return 0 ;;
+    b|B) return 1 ;;
+    *) warn "Noto'g'ri tanlov: '$choice'"; sleep 1; return 1 ;;
+  esac
+}
+
+# [2/5] Platformalar (multi-select: Android, iOS)
+menu_pick_platforms() {
+  echo
+  step "[2/5] Platformalar"
+  info "Rejim: ${BOLD}${MAGENTA}${MODE_LABEL}${NC} (oldingi bosqichdan)"
+
+  CHECKBOX_INITIAL=("$DEFAULT_ANDROID" "$DEFAULT_IOS")
+  arrow_checkbox "Qaysi platformalarni build qilamiz? (Space tanlash)" \
+    "Android" \
+    "iOS"
+
+  if [ "${CHECKBOX_CANCELLED:-false}" = "true" ]; then
+    return 1
+  fi
+
+  BUILD_ANDROID="${CHECKBOX_RESULT[0]}"
+  BUILD_IOS="${CHECKBOX_RESULT[1]}"
+
+  if ! $BUILD_ANDROID && ! $BUILD_IOS; then
+    warn "Hech qaysi platforma tanlanmadi"
+    info "Space tugmasi bilan kamida bittasini yoqing"
+    pause
+    return 1
+  fi
+
+  if $BUILD_IOS && [ "$(uname)" != "Darwin" ]; then
+    err "iOS build faqat macOS da ishlaydi (bu tizim: $(uname))"
+    info "iOS'ni o'chiring yoki macOS'da ishga tushiring"
+    pause
+    return 1
+  fi
+
+  return 0
+}
+
+# [3/5] Android format (faqat Android tanlanganda)
+menu_pick_android_format() {
+  echo
+  step "[3/5] Android format"
+  info "Platformalar: ${BOLD}Android${NC}$($BUILD_IOS && printf ", iOS")"
+
+  CHECKBOX_INITIAL=("$DEFAULT_AAB" "$DEFAULT_APK")
+  arrow_checkbox "Android format (AAB Play Store uchun, APK sideload uchun)" \
+    "AAB" \
+    "APK"
+
+  if [ "${CHECKBOX_CANCELLED:-false}" = "true" ]; then
+    return 1
+  fi
+
+  BUILD_AAB="${CHECKBOX_RESULT[0]}"
+  BUILD_APK="${CHECKBOX_RESULT[1]}"
+
+  if ! $BUILD_AAB && ! $BUILD_APK; then
+    warn "Format tanlanmadi (AAB yoki APK)"
+    info "Space bilan kamida bittasini yoqing"
+    pause
+    return 1
+  fi
+
+  return 0
+}
+
+# [4/5] Build oldidan amallar (ixtiyoriy)
+menu_pick_prebuild_tasks() {
+  echo
+  step "[4/5] Build oldidan amallar"
+  info "(Ixtiyoriy — hech qaysisi yoqilmasligi mumkin)"
+
+  CHECKBOX_INITIAL=("$DEFAULT_FLUTTER_CLEAN" "$DEFAULT_FLUTTER_PUB_GET")
+  arrow_checkbox "Tanlovlar (Space tanlash, Enter o'tish)" \
+    "flutter clean   (build kesh tozalash — sekinroq, lekin toza)" \
+    "flutter pub get (paketlar yangilash — tavsiya etiladi)"
+
+  if [ "${CHECKBOX_CANCELLED:-false}" = "true" ]; then
+    return 1
+  fi
+
+  DO_CLEAN="${CHECKBOX_RESULT[0]}"
+  DO_PUBGET="${CHECKBOX_RESULT[1]}"
+  return 0
+}
+
+# [5/5] Build'dan keyin deploy (faqat tegishli optsiyalar)
+menu_pick_deploy_targets() {
+  # Qaysi deploy optsiyalari mantiqiy?
+  local appstore_applicable=false
+  local playstore_applicable=false
+
+  if $IS_PROD && $BUILD_IOS; then
+    appstore_applicable=true
+  fi
+  if $IS_PROD && $BUILD_ANDROID && $BUILD_AAB; then
+    playstore_applicable=true
+  fi
+
+  # Hech qaysisi mantiqiy emas — bosqichni o'tkazib yuboramiz
+  if ! $appstore_applicable && ! $playstore_applicable; then
+    DO_APPSTORE_UPLOAD=false
+    DO_PLAYSTORE_UPLOAD=false
+    if ! $IS_PROD; then
+      info "Deploy bosqichi o'tkazib yuborildi (Debug rejim — Play/App Store ga yuklash mumkin emas)"
+    else
+      info "Deploy bosqichi o'tkazib yuborildi (Production + iOS yoki Production + Android + AAB kerak)"
+    fi
+    return 0
+  fi
+
+  echo
+  step "[5/5] Build'dan keyin deploy"
+  info "(Ixtiyoriy — faqat tegishli optsiyalar ko'rsatildi)"
+
+  # Dinamik options list (faqat tegishlilarini)
+  local options=()
+  local initial=()
+  if $appstore_applicable; then
+    options+=("App Store Connect upload (iOS, xcrun altool)")
+    initial+=("$DEFAULT_APPSTORE_UPLOAD")
+  fi
+  if $playstore_applicable; then
+    options+=("Play Store upload (Android, AAB, Google API)")
+    initial+=("$DEFAULT_PLAYSTORE_UPLOAD")
+  fi
+
+  CHECKBOX_INITIAL=("${initial[@]}")
+  arrow_checkbox "Deploy (Space tanlash, Enter o'tish)" "${options[@]}"
+
+  if [ "${CHECKBOX_CANCELLED:-false}" = "true" ]; then
+    return 1
+  fi
+
+  # Natijalarni qayta sortlash (har biri faqat agar applicable bo'lsa)
+  local idx=0
+  if $appstore_applicable; then
+    DO_APPSTORE_UPLOAD="${CHECKBOX_RESULT[$idx]}"
+    idx=$((idx + 1))
+  else
+    DO_APPSTORE_UPLOAD=false
+  fi
+  if $playstore_applicable; then
+    DO_PLAYSTORE_UPLOAD="${CHECKBOX_RESULT[$idx]}"
+  else
+    DO_PLAYSTORE_UPLOAD=false
+  fi
+
+  return 0
+}
+
+# Wizard orchestrator — 5 bosqichni state machine bilan boshqaradi
+# Foydalanuvchi har bosqichdan 'b' bilan oldingi bosqichga qaytishi mumkin.
+# Birinchi bosqichdan 'b' = asosiy menyu'ga qaytish.
+run_build_wizard() {
+  local step=1
+  while true; do
+    case "$step" in
+      1)
+        # Build mode
+        if menu_pick_build_mode; then
+          step=2
+        else
+          return 1   # Orqaga = asosiy menyu
+        fi
+        ;;
+      2)
+        # Platformalar
+        if menu_pick_platforms; then
+          step=3
+        else
+          step=1
+        fi
+        ;;
+      3)
+        # Android format (conditional)
+        if $BUILD_ANDROID; then
+          if menu_pick_android_format; then
+            step=4
+          else
+            step=2
+          fi
+        else
+          # Android tanlanmagan — formatni o'tkazib yuboramiz
+          BUILD_AAB=false
+          BUILD_APK=false
+          step=4
+        fi
+        ;;
+      4)
+        # Pre-build tasks
+        if menu_pick_prebuild_tasks; then
+          step=5
+        else
+          # Orqaga: agar Android bo'lsa step 3 ga, aks holda step 2 ga
+          if $BUILD_ANDROID; then
+            step=3
+          else
+            step=2
+          fi
+        fi
+        ;;
+      5)
+        # Deploy targets (contextual)
+        if menu_pick_deploy_targets; then
+          break   # Wizard tugadi
+        else
+          step=4
+        fi
+        ;;
+    esac
+  done
+  return 0
+}
+
 # ─── Asosiy build oqimi (v1.10.0: funksiyaga o'ralgan) ─────
 # Return codes:
 #   0 — build muvaffaqiyatli
@@ -3815,103 +4059,29 @@ printf  "  ${BOLD}│${NC}  ${CYAN}%-22s${NC} ${YELLOW}%s${NC}\n" "Android versi
 printf  "  ${BOLD}│${NC}  ${CYAN}%-22s${NC} ${YELLOW}%s${NC}\n" "Android versionCode" "${ANDROID_BUILD}"
 echo -e "  ${BOLD}╰──────────────────────────────────────────────────╯${NC}"
 
-# ─── 2. Tanlovlar (yagona checkbox menyu) ─────────────────
-# Settings'dan default'larni oldindan tanlangan holatga qo'yamiz.
-# Foydalanuvchi xohlasa o'zgartira oladi.
-CHECKBOX_INITIAL=(
-  "$DEFAULT_PRODUCTION"
-  "$DEFAULT_ANDROID"
-  "$DEFAULT_IOS"
-  "$DEFAULT_FLUTTER_CLEAN"
-  "$DEFAULT_FLUTTER_PUB_GET"
-  "$DEFAULT_APPSTORE_UPLOAD"
-  "$DEFAULT_PLAYSTORE_UPLOAD"
-)
-arrow_checkbox "Tanlovlar (Debug = Production yoqilmasa)" \
-  "Production" \
-  "Android" \
-  "iOS" \
-  "flutter clean" \
-  "flutter pub get" \
-  "App Store Connect upload (Production + iOS bilan)" \
-  "Play Store upload (Production + Android + AAB bilan)"
-
-# Bekor qilindimi? (q yoki Esc)
-if [ "${CHECKBOX_CANCELLED:-false}" = "true" ]; then
-  warn "Build bekor qilindi"
-  return 1
-fi
-
-IS_PROD="${CHECKBOX_RESULT[0]}"
-BUILD_ANDROID="${CHECKBOX_RESULT[1]}"
-BUILD_IOS="${CHECKBOX_RESULT[2]}"
-DO_CLEAN="${CHECKBOX_RESULT[3]}"
-DO_PUBGET="${CHECKBOX_RESULT[4]}"
-DO_APPSTORE_UPLOAD="${CHECKBOX_RESULT[5]}"
-DO_PLAYSTORE_UPLOAD="${CHECKBOX_RESULT[6]}"
-
-if $IS_PROD; then MODE_LABEL="PRODUCTION"; else MODE_LABEL="DEBUG"; fi
-
-if ! $BUILD_ANDROID && ! $BUILD_IOS; then
-  err "Hech qaysi platforma tanlanmadi"
-  info "Space tugmasi bilan Android yoki iOS ni yoqing"
-  return 1
-fi
-
-if $BUILD_IOS && [ "$(uname)" != "Darwin" ]; then
-  err "iOS build faqat macOS da ishlaydi"
-  return 1
-fi
-
-if $DO_APPSTORE_UPLOAD; then
-  if ! $IS_PROD; then
-    err "App Store upload faqat Production rejimda ishlaydi"
-    info "Production checkbox'ini ham yoqing"
-    return 1
-  fi
-  if ! $BUILD_IOS; then
-    err "App Store upload uchun iOS tanlanishi kerak"
-    return 1
-  fi
-fi
-
-if $DO_PLAYSTORE_UPLOAD; then
-  if ! $IS_PROD; then
-    err "Play Store upload faqat Production rejimda ishlaydi"
-    info "Production checkbox'ini ham yoqing"
-    return 1
-  fi
-  if ! $BUILD_ANDROID; then
-    err "Play Store upload uchun Android tanlanishi kerak"
-    return 1
-  fi
-fi
-
-# ─── 2b. Android format tanlovi ───────────────────────────
+# ─── 2. Build Wizard (v1.11.0: bosqichma-bosqich) ──────────
+# 5 ta bosqich, har biri kichik va aniq:
+#   [1/5] Build rejimi (Production/Debug)
+#   [2/5] Platformalar (Android/iOS)
+#   [3/5] Android format (AAB/APK) — faqat Android tanlanganda
+#   [4/5] Build oldidan amallar (clean/pub get)
+#   [5/5] Deploy (contextual — faqat tegishli optsiyalar)
+#
+# Har bosqichdan 'b' bilan oldingi bosqichga qaytish mumkin.
+# Birinchi bosqichdan 'b' = asosiy menyu'ga qaytish.
+#
+# Wizard yakunida quyidagi global flag'lar o'rnatiladi:
+#   IS_PROD, MODE_LABEL, BUILD_ANDROID, BUILD_IOS,
+#   BUILD_AAB, BUILD_APK, DO_CLEAN, DO_PUBGET,
+#   DO_APPSTORE_UPLOAD, DO_PLAYSTORE_UPLOAD
 BUILD_AAB=false
 BUILD_APK=false
-if $BUILD_ANDROID; then
-  CHECKBOX_INITIAL=("$DEFAULT_AAB" "$DEFAULT_APK")
-  arrow_checkbox "Android format (AAB = Play Store, APK = sideload)" \
-    "AAB" \
-    "APK"
-  if [ "${CHECKBOX_CANCELLED:-false}" = "true" ]; then
-    warn "Build bekor qilindi"
-    return 1
-  fi
-  BUILD_AAB="${CHECKBOX_RESULT[0]}"
-  BUILD_APK="${CHECKBOX_RESULT[1]}"
+DO_APPSTORE_UPLOAD=false
+DO_PLAYSTORE_UPLOAD=false
 
-  if ! $BUILD_AAB && ! $BUILD_APK; then
-    err "Android tanlandi, lekin format tanlanmadi (AAB yoki APK)"
-    return 1
-  fi
-
-  if $DO_PLAYSTORE_UPLOAD && ! $BUILD_AAB; then
-    err "Play Store upload uchun AAB format tanlanishi kerak (APK qabul qilinmaydi)"
-    info "AAB ni yoqing yoki Play Store upload'ni o'chiring"
-    return 1
-  fi
+if ! run_build_wizard; then
+  warn "Build bekor qilindi — asosiy menyu'ga qaytdik"
+  return 1
 fi
 
 # Tanlangan platformalarni inson o'qiy oladigan satrga to'plash

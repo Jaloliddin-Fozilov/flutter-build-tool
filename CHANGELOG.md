@@ -5,6 +5,82 @@ Loyihaning barcha muhim o'zgarishlari shu faylga yoziladi.
 Format [Keep a Changelog](https://keepachangelog.com/uz/1.1.0/) asosida,
 versiyalash esa [Semantic Versioning](https://semver.org/lang/uz/) qoidasiga rioya qiladi.
 
+## [1.11.0] — 2026-05-14
+
+### O'zgartirildi — Build menyu wizard-style
+
+Avval build menyusi 7 ta checkbox'li **yagona katta menu** edi, ichida
+bog'liq narsalar aralashtirilgan ("App Store needs Production + iOS",
+"Play Store needs Production + Android + AAB"). Endi 5 bosqichli
+**wizard** — har bosqich kichik, fokuslangan, kontekst asosida.
+
+#### Yangi bosqichlar:
+
+**[1/5] Build rejimi** (radio: Production / Debug)
+- Numbered prompt: 1) Production, 2) Debug, b) Orqaga
+- Production — release, signed (Play/App Store uchun)
+- Debug — test build, signing yo'q
+
+**[2/5] Platformalar** (checkbox: Android, iOS)
+- Multi-select arrow_checkbox
+- iOS faqat macOS'da ko'rsatiladi (boshqa OS'da xato bilan back)
+
+**[3/5] Android format** (checkbox: AAB / APK)
+- **Faqat Android tanlanganda ko'rsatiladi**
+- Android tanlanmagan bo'lsa — bu bosqich o'tkazib yuboriladi (forward va
+  backward yo'nalishda)
+
+**[4/5] Build oldidan amallar** (checkbox: ixtiyoriy)
+- flutter clean — kesh tozalash
+- flutter pub get — paketlar yangilash
+
+**[5/5] Build'dan keyin deploy** (contextual checkbox)
+- **Faqat tegishli optsiyalar ko'rinadi**:
+  - App Store Connect upload — faqat Production + iOS
+  - Play Store upload — faqat Production + Android + AAB
+- Hech qaysisi tegishli emas (masalan Debug rejim) → bosqich
+  avtomatik o'tkazib yuboriladi
+
+### Back navigation
+
+Har bosqichda foydalanuvchi `b` bossa, oldingi bosqichga qaytadi
+(state machine). Birinchi bosqichdan `b` — asosiy menyu'ga qaytish.
+
+State graph:
+```
+main_menu
+   ↓
+[1/5] Mode ←─────────────────────┐
+   ↓                              │
+[2/5] Platforms ──────────────────┘
+   ↓                              ↑
+[3/5] Format (faqat Android) ─────┘ (skip if no Android)
+   ↓                              ↑
+[4/5] Pre-build ──────────────────┘
+   ↓                              ↑
+[5/5] Deploy (contextual) ────────┘
+   ↓
+Versions / Confirm / Build
+```
+
+### Olib tashlangan
+- Eski monolitik `arrow_checkbox "Tanlovlar..."` 7 ta opsiya bilan
+- Eski validatsiya kodi ("App Store needs Production+iOS" va h.k.) —
+  endi natural ravishda contextual UI orqali ta'minlanadi
+- "App Store/Play Store upload" qo'shimcha tushuntirish kerak emas —
+  ular faqat shartlar bajarilganda ko'rsatiladi
+
+### Falsafa: "Show only what's valid"
+
+Microsoft Setup Wizard yoki iOS Onboarding patterni. Foydalanuvchi
+faqat kerakli narsani ko'radi va **noto'g'ri kombinatsiya tanlashi
+mumkin emas** — UI uni oldini oladi.
+
+Test: 13/13 unit test
+- menu_pick_build_mode (Production/Debug/Back)
+- Settings default'lar (Production=true paytda default=1)
+- Deploy applicability matrix (5 kombinatsiya)
+
 ## [1.10.1] — 2026-05-14
 
 ### Tuzatildi
@@ -464,6 +540,7 @@ yangi yo'lni oladi (3 loyiha → 1 ta fayl tahriri).
 - AAB va APK formatlari, Production va Debug rejimlari.
 - Build natijalarini Finder'da avtomatik ochish.
 
+[1.11.0]: https://github.com/Jaloliddin-Fozilov/flutter-build-tool/releases/tag/v1.11.0
 [1.10.1]: https://github.com/Jaloliddin-Fozilov/flutter-build-tool/releases/tag/v1.10.1
 [1.10.0]: https://github.com/Jaloliddin-Fozilov/flutter-build-tool/releases/tag/v1.10.0
 [1.9.0]: https://github.com/Jaloliddin-Fozilov/flutter-build-tool/releases/tag/v1.9.0
