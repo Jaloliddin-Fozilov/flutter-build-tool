@@ -47,6 +47,8 @@ flutter-build
 - **Track promotion** (`--promote-android internal production`) — bir buyruq bilan track'lar orasida ko'chirish
 - **Staged rollout** — production'ga 10%/50%/100% bosqichli rollout (`--increase-rollout 50`)
 - **Per-project promotion strategiyasi** — har loyiha o'z workflow'ini saqlaydi
+- **Action-oriented xato xabarlari** — har xato uchun aniq recovery buyrug'i ("→ Buni sinab ko'ring") clipboard'ga copy-paste qilish uchun tayyor
+- **`flutter-build --doctor`** — tizim diagnostikasi: barcha talab'lar, akkauntlar, ruxsatlar bir qarashda
 - **Auto-update** — har ishga tushganda yangilanish tekshiriladi
 - **Cross-platform ochish** — build natijalari macOS (`open`), Linux (`xdg-open`), WSL (`explorer.exe`) da avtomatik ochiladi
 
@@ -79,6 +81,7 @@ flutter-build
 | `--version`, `-v` | Versiyani ko'rsatish |
 | `--help`, `-h` | Yordam |
 | `--settings`, `-s` | Sozlamalar menyusi (default'larni oldindan sozlash) |
+| `--doctor`, `-d` | Tizim diagnostikasi (nima ishlamayotganini aniqlash) |
 | `--promote-android FROM TO` | Android track promotion (masalan: `internal production`) |
 | `--increase-rollout PCT` | Joriy production rollout foizini oshirish (masalan: `50`) |
 | `--no-update-check` | Yangilanish tekshiruvisiz ishga tushirish (CI uchun) |

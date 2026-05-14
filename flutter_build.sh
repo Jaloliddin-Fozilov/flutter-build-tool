@@ -50,6 +50,33 @@ warn() { echo -e "  ${YELLOW}⚠${NC} $1"; }
 err()  { echo -e "  ${RED}✗${NC} $1"; }
 info() { echo -e "  ${CYAN}ℹ${NC} $1"; }
 
+# try_this — xatodan keyin foydalanuvchiga aniq recovery buyrug'(lar)ni ko'rsatish.
+# Foydalanish: try_this "cmd1" ["cmd2" ...]
+# Bir necha buyruqni ketma-ket bermoq mumkin.
+try_this() {
+  echo
+  echo -e "  ${BOLD}${YELLOW}→ Buni sinab ko'ring:${NC}"
+  local cmd
+  for cmd in "$@"; do
+    echo -e "    ${CYAN}\$${NC} ${BOLD}${cmd}${NC}"
+  done
+  echo
+}
+
+# try_this_install — dependency o'rnatish bo'yicha platform-aware tavsiya
+# Foydalanish: try_this_install "openssl" "macOS" "brew install openssl@3" "Linux" "sudo apt install openssl"
+try_this_install() {
+  local tool="$1"; shift
+  echo
+  echo -e "  ${BOLD}${YELLOW}→ '${tool}' ni o'rnatish:${NC}"
+  while [ "$#" -ge 2 ]; do
+    local platform="$1" cmd="$2"
+    echo -e "    ${CYAN}${platform}:${NC} ${BOLD}${cmd}${NC}"
+    shift 2
+  done
+  echo
+}
+
 # ─── Umumiy yordamchilar ──────────────────────────────────
 
 # resolve_version_input <input> <old>
@@ -165,6 +192,198 @@ show_settings_summary() {
 # Boolean qiymat uchun ✓/✗
 _yn() {
   if [ "$1" = "true" ]; then printf "${GREEN}✓ yoqilgan${NC}"; else printf "${RED}✗ o'chirilgan${NC}"; fi
+}
+
+# ─── Diagnostika (flutter-build --doctor) ────────────────
+
+# Tool versiyasini qisqa olib chiqish
+_tool_version() {
+  local tool="$1" version=""
+  case "$tool" in
+    flutter) version=$(flutter --version 2>/dev/null | head -1 | awk '{print $2}') ;;
+    bash)    version="${BASH_VERSION%%(*}" ;;
+    curl)    version=$(curl --version 2>/dev/null | head -1 | awk '{print $2}') ;;
+    openssl) version=$(openssl version 2>/dev/null | awk '{print $1, $2}') ;;
+    xcrun)   version=$(xcrun --version 2>/dev/null | awk '{print $2}') ;;
+    git)     version=$(git --version 2>/dev/null | awk '{print $3}') ;;
+  esac
+  echo "$version"
+}
+
+# Diagnostic check — barcha tool'lar va sozlamalarni ko'rib chiqadi
+run_diagnostics() {
+  banner "Flutter Build Tool — Doctor"
+  local fails=0 warns=0
+
+  echo -e "  ${BOLD}Asosiy talab'lar:${NC}"
+
+  # Flutter
+  if command -v flutter > /dev/null 2>&1; then
+    ok "Flutter SDK             ($(_tool_version flutter))"
+  else
+    err "Flutter SDK             topilmadi"
+    info "       Build qila olmaymiz"
+    fails=$((fails + 1))
+  fi
+
+  # bash
+  ok "bash                    ($(_tool_version bash))"
+
+  # curl
+  if command -v curl > /dev/null 2>&1; then
+    ok "curl                    ($(_tool_version curl))"
+  else
+    err "curl                    topilmadi"
+    info "       Auto-update va deploy ishlamaydi"
+    fails=$((fails + 1))
+  fi
+
+  # git (release notes uchun)
+  if command -v git > /dev/null 2>&1; then
+    ok "git                     ($(_tool_version git))"
+  else
+    warn "git                     topilmadi (release notes uchun ixtiyoriy)"
+    warns=$((warns + 1))
+  fi
+
+  echo
+  echo -e "  ${BOLD}iOS deploy talab'lari (macOS):${NC}"
+
+  if [ "$(uname)" = "Darwin" ]; then
+    if command -v xcrun > /dev/null 2>&1; then
+      ok "xcrun                   ($(_tool_version xcrun))"
+    else
+      err "xcrun                   topilmadi"
+      info "       iOS App Store upload ishlamaydi"
+      fails=$((fails + 1))
+    fi
+  else
+    info "  (macOS emas — iOS deploy talab'lari skip)"
+  fi
+
+  echo
+  echo -e "  ${BOLD}Android deploy talab'lari:${NC}"
+
+  if command -v openssl > /dev/null 2>&1; then
+    ok "openssl                 ($(_tool_version openssl))"
+  else
+    err "openssl                 topilmadi"
+    info "       Play Store upload uchun JWT signing ishlamaydi"
+    fails=$((fails + 1))
+  fi
+
+  echo
+  echo -e "  ${BOLD}Settings va akkauntlar:${NC}"
+
+  local sfile
+  sfile=$(settings_file)
+  if [ -f "$sfile" ]; then
+    ok "Settings fayli          ($sfile)"
+  else
+    info "Settings fayli yo'q     (factory default'lar ishlatiladi)"
+    info "       Sozlash uchun: flutter-build --settings"
+  fi
+
+  # Play Store akkauntlari — hardcoded path (avoid forward-reference to later-defined function)
+  local play_acc_dir="${HOME}/.config/flutter-build-tool/accounts/play"
+  local pcount=0
+  if [ -d "$play_acc_dir" ]; then
+    pcount=$(find "$play_acc_dir" -name "*.json" -type f 2>/dev/null | wc -l | tr -d ' ')
+  fi
+  if [ "$pcount" -gt 0 ]; then
+    ok "Play Store akkauntlari  (${pcount} ta sozlangan)"
+  else
+    info "Play Store akkauntlari  (yo'q — birinchi build'da so'raladi)"
+  fi
+
+  # App Store akkauntlari
+  local appstore_acc_dir="${HOME}/.config/flutter-build-tool/accounts/appstore"
+  local acount=0
+  if [ -d "$appstore_acc_dir" ]; then
+    acount=$(find "$appstore_acc_dir" -name "*.json" -type f 2>/dev/null | wc -l | tr -d ' ')
+  fi
+  if [ "$acount" -gt 0 ]; then
+    ok "App Store akkauntlari   (${acount} ta sozlangan)"
+  else
+    info "App Store akkauntlari   (yo'q — birinchi build'da so'raladi)"
+  fi
+
+  echo
+  echo -e "  ${BOLD}Yozish ruxsati (auto-update uchun):${NC}"
+
+  local self="$0"
+  if command -v realpath > /dev/null 2>&1; then
+    self=$(realpath "$self" 2>/dev/null || echo "$0")
+  fi
+
+  if [ -w "$self" ] && [ -w "$(dirname "$self")" ]; then
+    ok "Skript joyi             (${self}, foydalanuvchi yozolinadi)"
+  else
+    warn "Skript joyi             (${self}, root-egalik)"
+    info "       Auto-update sudo bilan ishlaydi (avtomatik so'raydi)"
+    warns=$((warns + 1))
+  fi
+
+  echo
+  echo -e "  ${BOLD}Auto-update:${NC}"
+  if [ "${AUTO_UPDATE_ENABLED:-true}" = "true" ]; then
+    ok "Auto-update             yoqilgan (${AUTO_UPDATE_TIMEOUT:-5}s timeout)"
+  else
+    info "Auto-update             o'chirilgan"
+  fi
+
+  # Live raw URL access check
+  if command -v curl > /dev/null 2>&1; then
+    if curl -fsSL --max-time 3 -o /dev/null "$SCRIPT_RAW_URL" 2>/dev/null; then
+      ok "GitHub raw URL          erishish mumkin"
+    else
+      warn "GitHub raw URL          erishib bo'lmadi (tarmoq yoki SSL?)"
+      warns=$((warns + 1))
+    fi
+  fi
+
+  echo
+  echo -e "  ${BOLD}Loyiha holati:${NC}"
+  if [ -f "pubspec.yaml" ]; then
+    local pname
+    pname=$(awk -F: '/^name:/{v=$2; sub(/#.*/,"",v); gsub(/[" ]/,"",v); print v; exit}' pubspec.yaml 2>/dev/null)
+    ok "pubspec.yaml mavjud     ($pname)"
+
+    # Android applicationId — inline regex (avoid forward-reference)
+    local apkg=""
+    if [ -f "android/app/build.gradle.kts" ]; then
+      apkg=$(grep -oE 'applicationId[[:space:]]*=[[:space:]]*"[^"]*"' android/app/build.gradle.kts \
+        | head -1 | sed -E 's/.*"([^"]*)".*/\1/')
+    fi
+    if [ -z "$apkg" ] && [ -f "android/app/build.gradle" ]; then
+      apkg=$(grep -oE 'applicationId[[:space:]]+"[^"]*"' android/app/build.gradle \
+        | head -1 | sed -E 's/applicationId[[:space:]]+"([^"]*)"/\1/')
+    fi
+    [ -n "$apkg" ] && ok "Android applicationId   ($apkg)"
+
+    # iOS bundle id — inline (avoid forward-reference)
+    local ibundle=""
+    if [ -f "ios/Runner.xcodeproj/project.pbxproj" ]; then
+      ibundle=$(grep "PRODUCT_BUNDLE_IDENTIFIER" "ios/Runner.xcodeproj/project.pbxproj" 2>/dev/null \
+        | grep -v "RunnerTests\|FLUTTER_BUILD" \
+        | head -1 \
+        | sed -E 's/.*PRODUCT_BUNDLE_IDENTIFIER[[:space:]]*=[[:space:]]*([^;]+);.*/\1/' \
+        | tr -d '"' | tr -d ' ')
+    fi
+    [ -n "$ibundle" ] && ok "iOS bundle id           ($ibundle)"
+  else
+    info "pubspec.yaml topilmadi  (Flutter loyihasi ildizidan ishga tushiring)"
+  fi
+
+  echo
+  if [ "$fails" -eq 0 ] && [ "$warns" -eq 0 ]; then
+    echo -e "  ${BOLD}${GREEN}✓ Hammasi tayyor!${NC}"
+  elif [ "$fails" -eq 0 ]; then
+    echo -e "  ${BOLD}${YELLOW}⚠ ${warns} ta ogohlantirish — kritik emas${NC}"
+  else
+    echo -e "  ${BOLD}${RED}✗ ${fails} ta kritik muammo, ${warns} ta ogohlantirish${NC}"
+  fi
+  echo
 }
 
 # ─── Release notes (testerlar uchun "Yangiliklar") ──────
@@ -912,8 +1131,21 @@ perform_self_update() {
   step "Yangi versiya yuklab olinmoqda..."
 
   if ! curl -fsSL --max-time 30 "$SCRIPT_RAW_URL" -o "$tmp"; then
-    err "Yuklab olib bo'lmadi (network yoki repo muammosi)"
+    err "Yuklab olib bo'lmadi"
     rm -f "$tmp"
+
+    # Yozish ruxsatini tekshirib, mosroq tavsiya beramiz
+    if $needs_sudo 2>/dev/null && [ ! -w "$(dirname "$self")" ]; then
+      info "Sabab: yozish ruxsati yo'q (skript ${self} root-egalik)"
+      try_this \
+        "sudo curl -fsSL ${SCRIPT_RAW_URL} -o ${self}" \
+        "sudo chmod +x ${self}"
+    else
+      info "Sabab: tarmoq, GitHub mavjud emas yoki SSL muammosi"
+      try_this \
+        "curl -v -fsSL ${SCRIPT_RAW_URL}    # batafsil log uchun" \
+        "ping raw.githubusercontent.com      # tarmoqni tekshirish"
+    fi
     return 1
   fi
 
@@ -929,8 +1161,11 @@ perform_self_update() {
     info "Ushbu joyga yozish uchun sudo (administrator paroli) kerak"
     echo
     if ! command -v sudo > /dev/null 2>&1; then
-      err "'sudo' topilmadi — qo'lda yangilang:"
-      echo -e "    ${BOLD}cp $tmp $self && chmod +x $self${NC}  (root sifatida)"
+      err "'sudo' topilmadi"
+      info "Root sifatida ishga tushiring:"
+      try_this \
+        "cp $tmp $self" \
+        "chmod +x $self"
       return 1
     fi
 
@@ -943,11 +1178,13 @@ perform_self_update() {
       echo "    $self"
       exit 0
     else
-      err "Sudo bilan o'rnatish xato berdi"
+      err "Sudo bilan o'rnatish xato berdi (parol noto'g'ri yoki bekor qilindi?)"
       info "Qo'lda yangilang:"
-      echo -e "    ${BOLD}sudo cp $tmp $self && sudo chmod +x $self${NC}"
-      info "Yoki to'g'ridan-to'g'ri yuklab oling:"
-      echo -e "    ${BOLD}sudo curl -fsSL ${SCRIPT_RAW_URL} -o $self && sudo chmod +x $self${NC}"
+      try_this \
+        "sudo cp $tmp $self" \
+        "sudo chmod +x $self"
+      info "Yoki to'g'ridan-to'g'ri internetdan:"
+      try_this "sudo curl -fsSL ${SCRIPT_RAW_URL} -o $self && sudo chmod +x $self"
       return 1
     fi
   fi
@@ -965,6 +1202,7 @@ perform_self_update() {
 # ─── Argumentlarni tahlil qilish ──────────────────────────
 SKIP_UPDATE=false
 SETTINGS_MODE=false
+DOCTOR_MODE=false
 PROMOTE_MODE=false
 PROMOTE_FROM=""
 PROMOTE_TO=""
@@ -980,6 +1218,9 @@ while [ "$i" -lt "${#args[@]}" ]; do
       ;;
     --settings|-s)
       SETTINGS_MODE=true
+      ;;
+    --doctor|-d)
+      DOCTOR_MODE=true
       ;;
     --promote-android)
       PROMOTE_MODE=true
@@ -1008,6 +1249,7 @@ Flutter Build Tool v${SCRIPT_VERSION}
 Foydalanish:
   ./flutter_build.sh                              Interaktiv build
   ./flutter_build.sh --settings, -s               Sozlamalar menyusi
+  ./flutter_build.sh --doctor, -d                 Tizim diagnostikasi (nima ishlamayotganini ko'rish)
   ./flutter_build.sh --promote-android FROM TO    Track promotion (Android)
                                                   Misol: --promote-android internal production
   ./flutter_build.sh --increase-rollout PCT       Production rollout foizini oshirish
@@ -1033,6 +1275,12 @@ $SKIP_UPDATE || check_for_update
 # Settings menyu rejimi — build'ga o'tmaymiz
 if $SETTINGS_MODE; then
   settings_main_menu
+  exit 0
+fi
+
+# Doctor rejimi — diagnostika ko'rsatish va chiqish
+if $DOCTOR_MODE; then
+  run_diagnostics
   exit 0
 fi
 
@@ -2094,7 +2342,9 @@ upload_to_appstore() {
   step "App Store Connect ga yuklash"
 
   if ! command -v xcrun > /dev/null 2>&1; then
-    err "xcrun topilmadi — Xcode Command Line Tools o'rnatilganmi?"
+    err "xcrun topilmadi — Xcode Command Line Tools o'rnatilmagan"
+    try_this_install "Xcode Command Line Tools" \
+      "macOS" "xcode-select --install"
     return 1
   fi
 
@@ -2151,11 +2401,18 @@ upload_to_appstore() {
   else
     echo
     err "Yuklash xato berdi — yuqorida xato matnini ko'ring"
-    info "Eng keng tarqalgan sabablar:"
-    info "  - Bundle ID App Store Connect'da yaratilmagan"
-    info "  - Versiya raqami avval yuklangan bilan bir xil"
-    info "  - Distribution certificate yaroqsiz/eskirgan"
-    info "  - ExportOptions.plist'da noto'g'ri Team ID"
+    echo
+    info "Eng keng tarqalgan sabablar va yechimlar:"
+    info "  ${BOLD}• Bundle ID App Store Connect'da yaratilmagan${NC}"
+    try_this "open https://appstoreconnect.apple.com/apps   # 'New App' tugmasini bosing"
+    info "  ${BOLD}• Versiya raqami avval yuklangan${NC}"
+    try_this "flutter-build   # menu'da versiyaga '+' bosing (+1 oshiradi)"
+    info "  ${BOLD}• Distribution certificate yaroqsiz/eskirgan${NC}"
+    try_this "open 'Xcode → Settings → Accounts → Manage Certificates'"
+    info "  ${BOLD}• ExportOptions.plist'da Team ID noto'g'ri${NC}"
+    try_this \
+      "rm ios/ExportOptions.plist                # qayta yaratish uchun" \
+      "flutter-build --settings                   # Team ID ni global default qiling"
     return 1
   fi
 }
@@ -3040,10 +3297,16 @@ upload_to_play_store() {
 
   if ! command -v openssl > /dev/null 2>&1; then
     err "openssl topilmadi (JWT signing uchun kerak)"
+    try_this_install "openssl" \
+      "macOS" "brew install openssl@3" \
+      "Linux" "sudo apt install openssl   # yoki: sudo dnf install openssl"
     return 1
   fi
   if ! command -v curl > /dev/null 2>&1; then
     err "curl topilmadi"
+    try_this_install "curl" \
+      "macOS" "brew install curl   # (macOS'da odatda allaqachon bor)" \
+      "Linux" "sudo apt install curl   # yoki: sudo dnf install curl"
     return 1
   fi
 
@@ -3112,6 +3375,14 @@ upload_to_play_store() {
     -H "Content-Type: application/json" \
     -d '{}' 2>&1) || {
       err "Edit yaratish xato: $edit_response"
+      # 403 yoki 404 bo'lsa, eng keng tarqalgan sabablar
+      if echo "$edit_response" | grep -q '"code": *403'; then
+        info "Sabab: Service Account ruxsatlari yetishmaydi"
+        try_this "open https://play.google.com/console/u/0/api-access   # Service Account'ga 'Releases' ruxsatlarini bering"
+      elif echo "$edit_response" | grep -q '"code": *404'; then
+        info "Sabab: app Play Console'da topilmadi yoki birinchi AAB qo'lda yuklanmagan"
+        try_this "open 'https://play.google.com/console/u/0/developers/-/app/${package_name}/app-dashboard'"
+      fi
       return 1
     }
   edit_id=$(extract_json_field "$edit_response" "id")
@@ -3131,6 +3402,16 @@ upload_to_play_store() {
     -H "Content-Type: application/octet-stream" \
     --data-binary "@${aab}" 2>&1) || {
       err "AAB yuklash xato: $upload_response"
+      # versionCode conflict — eng tez-tez uchraydi
+      if echo "$upload_response" | grep -qE 'APK specifies a version code that has already been used|Version code [0-9]+ has already been used'; then
+        info "Sabab: bu versionCode allaqachon Play Store'ga yuklangan"
+        try_this \
+          "flutter-build   # menu'da build #ga '+' bosing (avtomatik +1)" \
+          "# yoki pubspec.yaml'da version: X.Y.Z+N ni N+1 ga oshiring"
+      elif echo "$upload_response" | grep -q 'APK is not signed'; then
+        info "Sabab: AAB signed emas yoki noto'g'ri signing"
+        try_this "flutter-build   # Production checkbox'ini yoqing va keystore sozlang"
+      fi
       return 1
     }
   version_code=$(extract_json_number "$upload_response" "versionCode")
@@ -3202,7 +3483,11 @@ if [ ! -f "pubspec.yaml" ]; then
 fi
 
 if ! command -v flutter &> /dev/null; then
-  err "Flutter o'rnatilmagan yoki PATH da yo'q."
+  err "Flutter o'rnatilmagan yoki PATH da yo'q"
+  try_this_install "Flutter SDK" \
+    "Hammasi" "https://docs.flutter.dev/get-started/install"
+  info "Yoki agar o'rnatilgan bo'lsa, PATH ga qo'shing:"
+  try_this "export PATH=\"\$PATH:\$HOME/development/flutter/bin\""
   exit 1
 fi
 
