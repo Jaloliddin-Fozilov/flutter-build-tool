@@ -41,6 +41,7 @@ flutter-build
 - **Android Play Store upload** — Google Play Developer API ga to'g'ridan-to'g'ri (Ruby, Python, Node — hech narsa kerak emas; pure bash + openssl)
 - **Avtomatik sozlash wizard'lari** — brauzer ochiladi, key fayllari Downloads'dan avtomatik aniqlanadi, sozlash bir necha clickda tugaydi (Key ID, Issuer ID, JSON yo'l — barchasi auto-detect)
 - **Per-project konfiguratsiya** — har loyiha o'z `package_name`/`bundle_id` bo'yicha alohida sozlanadi. Bir marta sozlasangiz, **qayta so'ralmaydi**. Bir Service Account ko'p loyihaga ishlatilishi mumkin (cross-project reuse).
+- **Named Accounts (AWS CLI-style)** — har xil loyihalar har xil akkauntlardan foydalanishi mumkin: shaxsiy, ish, mijoz. Yangi loyiha aniqlanganda **akkaunt picker** ko'rsatiladi.
 - **Auto-update** — har ishga tushganda yangilanish tekshiriladi
 - **Cross-platform ochish** — build natijalari macOS (`open`), Linux (`xdg-open`), WSL (`explorer.exe`) da avtomatik ochiladi
 

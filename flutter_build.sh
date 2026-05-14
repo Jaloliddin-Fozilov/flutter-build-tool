@@ -828,10 +828,13 @@ setup_android_signing() {
 
 # ─── iOS App Store Connect deploy yordamchi funksiyalari ──
 
-# Config fayl yo'li: ~/.config/flutter-build-tool/app_store_connect.json
-appstore_config_dir()       { echo "${HOME}/.config/flutter-build-tool"; }
-appstore_projects_dir()     { echo "$(appstore_config_dir)/appstore"; }
-appstore_legacy_config()    { echo "$(appstore_config_dir)/app_store_connect.json"; }
+# Config yo'llari — v1.6.0 dan boshlab Named Accounts (AWS profile patterni)
+# Loyiha: ~/.config/flutter-build-tool/appstore/<bundle>.json → account havolasi
+# Akkaunt: ~/.config/flutter-build-tool/accounts/appstore/<account>.json → API Key
+appstore_config_dir()    { echo "${HOME}/.config/flutter-build-tool"; }
+appstore_projects_dir()  { echo "$(appstore_config_dir)/appstore"; }
+appstore_accounts_dir()  { echo "$(appstore_config_dir)/accounts/appstore"; }
+appstore_legacy_config() { echo "$(appstore_config_dir)/app_store_connect.json"; }
 
 # Per-bundle config fayli (bundle_id bo'yicha)
 appstore_project_config_file() {
@@ -862,9 +865,9 @@ appstore_project_config_get() {
     | sed -E "s/.*\"${key}\"[[:space:]]*:[[:space:]]*\"([^\"]*)\".*/\1/"
 }
 
-# Per-bundle saqlash
+# Per-bundle saqlash (v1.6.0: account nomi havola)
 appstore_project_config_save() {
-  local bundle_id="$1" key_id="$2" issuer_id="$3" key_path="$4"
+  local bundle_id="$1" account="$2"
   local file dir
   file=$(appstore_project_config_file "$bundle_id")
   dir=$(dirname "$file")
@@ -873,6 +876,36 @@ appstore_project_config_save() {
   cat > "$file" <<JSON
 {
   "bundle_id": "${bundle_id}",
+  "account": "${account}"
+}
+JSON
+  chmod 600 "$file"
+}
+
+# ─── Akkaunt funksiyalari ───────────────────────────────
+
+appstore_account_file()   { echo "$(appstore_accounts_dir)/${1}.json"; }
+appstore_account_exists() { [ -f "$(appstore_account_file "$1")" ]; }
+
+appstore_account_get() {
+  local name="$1" key="$2"
+  local file
+  file=$(appstore_account_file "$name")
+  [ ! -f "$file" ] && return 1
+  grep -E "\"${key}\"" "$file" | head -1 \
+    | sed -E "s/.*\"${key}\"[[:space:]]*:[[:space:]]*\"([^\"]*)\".*/\1/"
+}
+
+appstore_account_save() {
+  local name="$1" key_id="$2" issuer_id="$3" key_path="$4"
+  local file dir
+  file=$(appstore_account_file "$name")
+  dir=$(dirname "$file")
+  mkdir -p "$dir"
+  chmod 700 "$dir"
+  cat > "$file" <<JSON
+{
+  "name": "${name}",
   "key_id": "${key_id}",
   "issuer_id": "${issuer_id}",
   "key_path": "${key_path}"
@@ -881,19 +914,33 @@ JSON
   chmod 600 "$file"
 }
 
-# Eski yagona-fayl formatdan per-bundle ga migratsiya
+# Akkaunt nomini Key ID dan derive qilish (Apple Key ID o'zi unique)
+appstore_derive_account_name() {
+  local key_id="$1"
+  sanitize_account_name "${key_id}"
+}
+
+appstore_list_accounts() {
+  local dir
+  dir=$(appstore_accounts_dir)
+  [ ! -d "$dir" ] && return 0
+  local f
+  for f in "$dir"/*.json; do
+    [ -f "$f" ] || continue
+    basename "$f" .json
+  done
+}
+
+# ─── Migratsiyalar ──────────────────────────────────────
+
+# v1.4.x yagona-fayl formatdan v1.6.0 ga
 appstore_migrate_legacy_config() {
   local old
   old=$(appstore_legacy_config)
   [ ! -f "$old" ] && return 0
 
-  # Eski formatda bundle_id yo'q edi — joriy loyihadan oldindan aniqlanadi
   local current_bundle
   current_bundle=$(detect_ios_bundle_id 2>/dev/null || echo "")
-  if [ -z "$current_bundle" ]; then
-    # Bundle id aniqlanmadi — eski faylni saqlab qo'yamiz
-    return 0
-  fi
 
   local kid iid kp
   kid=$(grep '"key_id"' "$old" | sed -E 's/.*"key_id"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/' | head -1)
@@ -901,149 +948,90 @@ appstore_migrate_legacy_config() {
   kp=$(grep '"key_path"' "$old" | sed -E 's/.*"key_path"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/' | head -1)
 
   if [ -n "$kid" ] && [ -n "$iid" ]; then
-    local new
-    new=$(appstore_project_config_file "$current_bundle")
-    if [ ! -f "$new" ]; then
-      appstore_project_config_save "$current_bundle" "$kid" "$iid" "$kp"
-      info "App Store eski sozlama yangi formatga ko'chirildi: ${current_bundle}"
+    local account
+    account=$(appstore_derive_account_name "$kid")
+    appstore_account_exists "$account" || appstore_account_save "$account" "$kid" "$iid" "$kp"
+
+    if [ -n "$current_bundle" ]; then
+      local new
+      new=$(appstore_project_config_file "$current_bundle")
+      [ ! -f "$new" ] && appstore_project_config_save "$current_bundle" "$account"
+      info "v1.4.x sozlamasi yangi formatga ko'chirildi: ${current_bundle} → ${account}"
     fi
   fi
 
   mv "$old" "${old}.legacy.$(date +%s)" 2>/dev/null || true
 }
 
-# Boshqa bundle'lardan mavjud Apple API kalitini topish
-appstore_find_existing_key() {
+# v1.5.0 (key_id+issuer_id+key_path bevosita) → v1.6.0 (account havolasi)
+appstore_migrate_v15_to_v16() {
   local dir
   dir=$(appstore_projects_dir)
-  [ ! -d "$dir" ] && return 1
+  [ ! -d "$dir" ] && return 0
 
-  local f kid iid kp
+  local f
   for f in "$dir"/*.json; do
     [ -f "$f" ] || continue
+    grep -q '"key_id"' "$f" 2>/dev/null || continue
+    grep -q '"account"' "$f" 2>/dev/null && continue
+
+    local bundle kid iid kp
+    bundle=$(grep '"bundle_id"' "$f" | sed -E 's/.*"bundle_id"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/' | head -1)
     kid=$(grep '"key_id"' "$f" | sed -E 's/.*"key_id"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/' | head -1)
     iid=$(grep '"issuer_id"' "$f" | sed -E 's/.*"issuer_id"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/' | head -1)
     kp=$(grep '"key_path"' "$f" | sed -E 's/.*"key_path"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/' | head -1)
-    if [ -n "$kid" ] && [ -n "$iid" ] && [ -f "$kp" ]; then
-      # Topildi — ":" bilan ajratilgan tuple qaytaramiz
-      printf '%s:%s:%s\n' "$kid" "$iid" "$kp"
-      return 0
-    fi
+    [ -z "$bundle" ] && continue
+    [ -z "$kid" ] && continue
+
+    cp "$f" "${f}.v15.$(date +%s)" 2>/dev/null || true
+
+    local account
+    account=$(appstore_derive_account_name "$kid")
+    appstore_account_exists "$account" || appstore_account_save "$account" "$kid" "$iid" "$kp"
+
+    appstore_project_config_save "$bundle" "$account"
+    info "v1.5.0 → v1.6.0: ${bundle} → akkaunt '${account}'"
   done
-  return 1
 }
 
 # Joriy bundle uchun konfiguratsiyani ko'rsatish
-show_appstore_project_config() {
-  local bundle_id="$1"
-  local kid iid kp
-  kid=$(appstore_project_config_get "$bundle_id" "key_id")
-  iid=$(appstore_project_config_get "$bundle_id" "issuer_id")
-  kp=$(appstore_project_config_get "$bundle_id" "key_path")
+# ─── v1.6.0 Account-asosli sozlash flow (iOS) ──────────
 
-  echo
-  echo -e "  ${BOLD}╭─ App Store Connect (bundle: ${bundle_id}) ─${NC}"
-  printf  "  ${BOLD}│${NC}  ${CYAN}%-12s${NC} ${YELLOW}%s${NC}\n" "Key ID"    "${kid}"
-  printf  "  ${BOLD}│${NC}  ${CYAN}%-12s${NC} ${YELLOW}%s…${NC}\n" "Issuer ID" "${iid:0:8}"
-  printf  "  ${BOLD}│${NC}  ${CYAN}%-12s${NC} ${YELLOW}%s${NC}\n" "Key path"  "${kp}"
-  echo -e "  ${BOLD}╰────────────────────────────────────────────────${NC}"
-}
-
-# Interaktiv sozlash — yangi API Key kiritish (per-bundle)
-setup_appstore_credentials() {
-  local target_bundle="$1"
-  if [ -z "$target_bundle" ]; then
-    target_bundle=$(detect_ios_bundle_id)
-  fi
-  if [ -z "$target_bundle" ]; then
-    err "iOS bundle id aniqlanmadi"
-    return 1
-  fi
-
-  step "App Store Connect API Key sozlash — ${target_bundle}"
-  info "App Store Connect → Users and Access → Integrations → API Keys'da yarating"
-  info "'.p8' faylni yuklab olib, xavfsiz joyga saqlang (faqat bir marta yuklanadi!)"
-  echo
-
-  local key_id issuer_id key_path default_path
-  read -p "    Key ID (masalan AB12CD34): " key_id
-  if [ -z "$key_id" ]; then
-    err "Key ID bo'sh bo'lishi mumkin emas"
-    return 1
-  fi
-
-  read -p "    Issuer ID (UUID format, masalan 12345678-1234-...): " issuer_id
-  if [ -z "$issuer_id" ]; then
-    err "Issuer ID bo'sh bo'lishi mumkin emas"
-    return 1
-  fi
-
-  default_path="${HOME}/.appstoreconnect/private_keys/AuthKey_${key_id}.p8"
-  read -p "    .p8 fayl yo'li [${default_path}]: " key_path
-  key_path="${key_path:-$default_path}"
-
-  if [ ! -f "$key_path" ]; then
-    warn ".p8 fayl topilmadi: $key_path"
-    info "Faylni quyidagi joyga ko'chiring (Apple konvensiyasi):"
-    info "  ${default_path}"
-    return 1
-  fi
-
-  appstore_project_config_save "$target_bundle" "$key_id" "$issuer_id" "$key_path"
-  ok "Sozlandi: $(appstore_project_config_file "$target_bundle")"
-}
-
-# Konfiguratsiyani ta'minlash — mavjud bo'lsa tekshiradi, yo'q bo'lsa sozlashni taklif qiladi
-# Avtomatik wizard — brauzerni ochib, fayl yuklanishini kutib, avtomatik sozlash (per-bundle)
-appstore_setup_wizard() {
-  local target_bundle="$1"
-  if [ -z "$target_bundle" ]; then
-    target_bundle=$(detect_ios_bundle_id)
-  fi
-  if [ -z "$target_bundle" ]; then
-    err "iOS bundle id aniqlanmadi (project.pbxproj topilmadi)"
-    return 1
-  fi
-
-  step "App Store Connect avtomatik sozlash — ${target_bundle}"
-  echo
-
-  # [1/3] Brauzerda API Keys sahifasi ochish
-  info "─ [1/3] App Store Connect API Key yarating ───────────"
-  info "Brauzerda App Store Connect ochiladi..."
-  echo
-  info "Sahifada:"
-  info "  1) ${BOLD}Generate API Key${NC} tugmasini bosing"
-  info "  2) Name: ${BOLD}flutter-build-deploy${NC}"
-  info "  3) Access: ${BOLD}App Manager${NC} (yoki ${BOLD}Developer${NC})"
-  info "  4) ${BOLD}Generate${NC} → '.p8' fayl avtomatik yuklab olinadi"
-  echo
+# Wizard yordamida .p8 ni topish va Key ID + Issuer ID ni yig'ish.
+# Stdout natija: 'key_id:issuer_id:key_path' formatida tuple.
+# Stderr: diagnostik xabarlar.
+appstore_wizard_collect_credentials() {
+  info "─ [1/3] App Store Connect API Key yarating ───────────" >&2
+  info "Brauzerda App Store Connect ochiladi..." >&2
+  info "  1) ${BOLD}Generate API Key${NC}" >&2
+  info "  2) Name: ${BOLD}flutter-build-deploy${NC}" >&2
+  info "  3) Access: ${BOLD}App Manager${NC}" >&2
+  info "  4) ${BOLD}Generate${NC} → '.p8' fayl avtomatik yuklanadi" >&2
+  echo >&2
 
   local marker="/tmp/.fbt_appstore.$$"
   touch "$marker"
-  open_url "https://appstoreconnect.apple.com/access/integrations/api"
-  echo
+  open_url "https://appstoreconnect.apple.com/access/integrations/api" >&2
+  echo >&2
 
-  # [2/3] .p8 faylni topish (polling)
-  info "─ [2/3] .p8 faylni topyapmiz ─────────────────────────"
+  info "─ [2/3] .p8 faylni topyapmiz ─────────────────────────" >&2
   local p8_file
   p8_file=$(wait_for_download "AuthKey_*.p8" "$marker" 90 || true)
   rm -f "$marker"
 
   if [ -z "$p8_file" ] || [ ! -f "$p8_file" ]; then
-    warn ".p8 fayl avtomatik topilmadi"
+    warn ".p8 fayl avtomatik topilmadi" >&2
     read -p "  Fayl yo'lini qo'lda kiriting (yoki Enter — bekor): " p8_file
     p8_file="${p8_file/#\~/$HOME}"
-    [ -z "$p8_file" ] && { warn "Bekor qilindi"; return 1; }
-    [ ! -f "$p8_file" ] && { err "Fayl topilmadi: $p8_file"; return 1; }
+    [ -z "$p8_file" ] && { warn "Bekor qilindi" >&2; return 1; }
+    [ ! -f "$p8_file" ] && { err "Fayl topilmadi: $p8_file" >&2; return 1; }
   fi
 
-  # Fayl nomidan Key ID ni chiqarish: AuthKey_AB12CD34.p8 → AB12CD34
   local key_id
   key_id=$(basename "$p8_file" | sed -E 's/^AuthKey_(.*)\.p8$/\1/')
-  ok "Key ID aniqlandi: ${BOLD}${key_id}${NC}"
+  ok "Key ID aniqlandi: ${BOLD}${key_id}${NC}" >&2
 
-  # Apple konvensiyasi: ~/.appstoreconnect/private_keys/
+  # Apple konvensiyasiga ko'chirish
   local target_dir="${HOME}/.appstoreconnect/private_keys"
   mkdir -p "$target_dir"
   chmod 700 "$target_dir"
@@ -1051,45 +1039,160 @@ appstore_setup_wizard() {
   if [ "$p8_file" != "$target_path" ]; then
     mv "$p8_file" "$target_path"
     chmod 600 "$target_path"
-    ok "Apple konvensiyasi yo'liga ko'chirildi: $target_path"
+    ok "Apple konvensiyasi yo'liga ko'chirildi: $target_path" >&2
   fi
 
-  # [3/3] Issuer ID — clipboard'dan auto-detect yoki qo'lda
-  echo
-  info "─ [3/3] Issuer ID ─────────────────────────────────────"
-  info "Yuqorida ochilgan sahifaning ${BOLD}yuqori chap${NC} burchagida 'Issuer ID' bor"
-  info "UUID format: 12345678-1234-1234-1234-123456789abc"
-  echo
+  # [3/3] Issuer ID
+  echo >&2
+  info "─ [3/3] Issuer ID ─────────────────────────────────────" >&2
+  info "Yuqorida ochilgan sahifaning yuqori chap qismida 'Issuer ID' bor" >&2
+  info "UUID format: 12345678-1234-1234-1234-123456789abc" >&2
+  echo >&2
 
   local issuer_id clip
   clip=$(read_clipboard)
   if [[ "$clip" =~ ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$ ]]; then
-    info "Clipboard'da UUID topildi: ${YELLOW}${clip}${NC}"
+    info "Clipboard'da UUID topildi: ${YELLOW}${clip}${NC}" >&2
     read -p "  Shu UUID ni Issuer ID sifatida ishlatamizmi? (y/n) [y]: " confirm
-    if [[ ! "$confirm" =~ ^[Nn]$ ]]; then
-      issuer_id="$clip"
-    fi
+    [[ ! "$confirm" =~ ^[Nn]$ ]] && issuer_id="$clip"
   fi
-
-  if [ -z "$issuer_id" ]; then
-    read -p "    Issuer ID: " issuer_id
-  fi
+  [ -z "$issuer_id" ] && read -p "    Issuer ID: " issuer_id
 
   if [[ ! "$issuer_id" =~ ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$ ]]; then
-    warn "UUID formatga to'g'ri kelmadi — shu bilan davom etamiz (xato bo'lsa qayta sozlang)"
+    warn "UUID formatga to'g'ri kelmadi — davom etamiz" >&2
   fi
 
-  appstore_project_config_save "$target_bundle" "$key_id" "$issuer_id" "$target_path"
-
-  echo
-  ok "App Store Connect sozlandi: $(appstore_project_config_file "$target_bundle")"
+  # Natija
+  printf '%s:%s:%s\n' "$key_id" "$issuer_id" "$target_path"
 }
 
-ensure_appstore_credentials() {
-  # Eski global config'ni per-bundle formatga ko'chirish (idempotent)
-  appstore_migrate_legacy_config
+# Yangi App Store akkaunti qo'shish — wizard yoki qo'lda
+appstore_add_new_account() {
+  local bundle="$1"  # ixtiyoriy
 
-  # Hozirgi loyiha bundle id ni aniqlash
+  step "Yangi App Store akkaunti qo'shish"
+  echo
+  echo -e "  ${BOLD}Sozlash usulini tanlang:${NC}"
+  echo -e "    ${CYAN}1${NC}) Avtomatik wizard ${GREEN}(tavsiya)${NC} — brauzer ochiladi, .p8 auto-detect"
+  echo -e "    ${CYAN}2${NC}) Qo'lda kiritish — Key ID, Issuer ID, .p8 yo'l"
+  echo
+  read -p "  Tanlang [1-2]: " choice
+
+  local key_id issuer_id key_path tuple
+  case "$choice" in
+    1|"")
+      tuple=$(appstore_wizard_collect_credentials) || return 1
+      key_id="${tuple%%:*}"
+      local rest="${tuple#*:}"
+      issuer_id="${rest%%:*}"
+      key_path="${rest#*:}"
+      ;;
+    2)
+      read -p "    Key ID (masalan AB12CD34): " key_id
+      [ -z "$key_id" ] && { err "Key ID bo'sh"; return 1; }
+      read -p "    Issuer ID (UUID): " issuer_id
+      [ -z "$issuer_id" ] && { err "Issuer ID bo'sh"; return 1; }
+      local default_path="${HOME}/.appstoreconnect/private_keys/AuthKey_${key_id}.p8"
+      read -p "    .p8 fayl yo'li [${default_path}]: " key_path
+      key_path="${key_path:-$default_path}"
+      [ ! -f "$key_path" ] && { err ".p8 topilmadi: $key_path"; return 1; }
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+
+  # Akkaunt nomi
+  echo
+  local default_name name
+  default_name=$(appstore_derive_account_name "$key_id")
+  echo -e "  ${BOLD}Akkaunt nomi${NC} — bu credentials uchun foydalanuvchi-do'st label"
+  info "Misol: 'personal', 'work-apple', 'client-xyz'"
+  read -p "  Akkaunt nomi [${default_name}]: " name
+  name="${name:-$default_name}"
+  name=$(sanitize_account_name "$name")
+
+  if appstore_account_exists "$name"; then
+    warn "Akkaunt '${name}' allaqachon mavjud"
+    read -p "  Qayta yozamizmi? (y/n) [n]: " replace
+    [[ ! "$replace" =~ ^[Yy]$ ]] && { warn "Bekor qilindi"; return 1; }
+  fi
+
+  appstore_account_save "$name" "$key_id" "$issuer_id" "$key_path"
+  ok "Akkaunt qo'shildi: ${BOLD}${name}${NC}"
+
+  # Loyihaga bog'lash
+  if [ -n "$bundle" ]; then
+    appstore_project_config_save "$bundle" "$name"
+    ok "Loyiha bog'landi: ${bundle} → '${name}'"
+  fi
+}
+
+# Akkaunt picker
+appstore_pick_account_for_project() {
+  local bundle="$1"
+
+  local accounts=()
+  local name
+  while IFS= read -r name; do
+    [ -n "$name" ] && accounts+=("$name")
+  done < <(appstore_list_accounts)
+
+  if [ ${#accounts[@]} -eq 0 ]; then
+    info "Hali App Store akkaunti qo'shilmagan"
+    appstore_add_new_account "$bundle"
+    return $?
+  fi
+
+  echo
+  echo -e "  ${BOLD}╭─ Mavjud App Store akkauntlari ──────────────────────${NC}"
+  local i=1 acc_name kid iid
+  for acc_name in "${accounts[@]}"; do
+    kid=$(appstore_account_get "$acc_name" "key_id")
+    iid=$(appstore_account_get "$acc_name" "issuer_id")
+    printf "  ${BOLD}│${NC}  ${CYAN}%d${NC}) ${BOLD}%-22s${NC} Key %s / Issuer %s…\n" \
+      "$i" "$acc_name" "$kid" "${iid:0:8}"
+    i=$((i + 1))
+  done
+  echo -e "  ${BOLD}├──────────────────────────────────────────────────────${NC}"
+  printf  "  ${BOLD}│${NC}  ${CYAN}%d${NC}) ${GREEN}➕ Yangi akkaunt qo'shish${NC}\n" "$i"
+  local cancel_i=$((i + 1))
+  printf  "  ${BOLD}│${NC}  ${CYAN}%d${NC}) Bekor qilish\n" "$cancel_i"
+  echo -e "  ${BOLD}╰──────────────────────────────────────────────────────${NC}"
+  echo
+
+  read -p "  Bundle '${bundle}' uchun akkaunt tanlang [1-${cancel_i}]: " choice
+
+  if ! [[ "$choice" =~ ^[0-9]+$ ]]; then
+    warn "Bekor qilindi"
+    return 1
+  fi
+
+  if [ "$choice" -ge 1 ] && [ "$choice" -le "${#accounts[@]}" ]; then
+    local picked="${accounts[$((choice - 1))]}"
+    info "Akkaunt tanlandi: ${BOLD}${picked}${NC}"
+    appstore_project_config_save "$bundle" "$picked"
+    ok "Bog'landi: ${bundle} → '${picked}'"
+    return 0
+  fi
+
+  if [ "$choice" -eq "$i" ]; then
+    appstore_add_new_account "$bundle"
+    return $?
+  fi
+
+  warn "Bekor qilindi"
+  return 1
+}
+
+# Backwards-compat shim'lar
+setup_appstore_credentials() { appstore_add_new_account "$1"; }
+appstore_setup_wizard() { appstore_add_new_account "$1"; }
+
+ensure_appstore_credentials() {
+  appstore_migrate_legacy_config
+  appstore_migrate_v15_to_v16
+
   local current_bundle
   current_bundle=$(detect_ios_bundle_id)
   if [ -z "$current_bundle" ]; then
@@ -1100,60 +1203,34 @@ ensure_appstore_credentials() {
   local cfg
   cfg=$(appstore_project_config_file "$current_bundle")
 
-  # Loyiha sozlangan bo'lsa — silent
   if [ -f "$cfg" ]; then
-    local kid kp
-    kid=$(appstore_project_config_get "$current_bundle" "key_id")
-    kp=$(appstore_project_config_get "$current_bundle" "key_path")
+    local account
+    account=$(appstore_project_config_get "$current_bundle" "account")
 
-    if [ ! -f "$kp" ]; then
-      warn ".p8 fayl yo'qolgan: $kp"
-      info "Loyiha uchun qayta sozlash kerak"
-      appstore_setup_wizard "$current_bundle" || return 1
+    if [ -z "$account" ]; then
+      warn "Loyiha config buzuq (akkaunt yo'q), qayta sozlaymiz"
+      rm -f "$cfg"
+    elif ! appstore_account_exists "$account"; then
+      warn "Akkaunt '${account}' topilmadi — qayta tanlash kerak"
+      appstore_pick_account_for_project "$current_bundle" || return 1
+      return 0
+    else
+      local kid kp
+      kid=$(appstore_account_get "$account" "key_id")
+      kp=$(appstore_account_get "$account" "key_path")
+      if [ ! -f "$kp" ]; then
+        warn "Akkaunt '${account}' ning .p8 fayli yo'qolgan: $kp"
+        appstore_add_new_account "" || return 1
+        appstore_pick_account_for_project "$current_bundle" || return 1
+        return 0
+      fi
+      ok "App Store: ${BOLD}${current_bundle}${NC} → '${BOLD}${account}${NC}' (Key ${YELLOW}${kid}${NC}) ${CYAN}(saqlangan)${NC}"
       return 0
     fi
-
-    ok "App Store: ${BOLD}${current_bundle}${NC} → Key ${YELLOW}${kid}${NC} ${CYAN}(saqlangan)${NC}"
-    return 0
   fi
 
-  # Yangi bundle — birinchi marta sozlash
   info "Yangi loyiha: ${BOLD}${current_bundle}${NC}"
-
-  # Boshqa loyihadan mavjud API Key bormi?
-  local existing
-  if existing=$(appstore_find_existing_key 2>/dev/null); then
-    local kid iid kp rest
-    kid="${existing%%:*}"
-    rest="${existing#*:}"
-    iid="${rest%%:*}"
-    kp="${rest#*:}"
-    echo
-    info "Mavjud Apple API Key topildi: ${BOLD}${kid}${NC}"
-    info "  Issuer: ${iid:0:8}…"
-    info "  Path:   ${kp}"
-    echo
-    read -p "  Shu kalit'ni bu loyihaga ham ishlataylikmi? (y/n) [y]: " reuse
-    if [[ ! "$reuse" =~ ^[Nn]$ ]]; then
-      appstore_project_config_save "$current_bundle" "$kid" "$iid" "$kp"
-      ok "Saqlandi: ${current_bundle} → Key ${kid}"
-      return 0
-    fi
-  fi
-
-  # Yangi API Key kerak
-  echo
-  echo -e "  ${BOLD}Sozlash usulini tanlang:${NC}"
-  echo -e "    ${CYAN}1${NC}) Avtomatik wizard ${GREEN}(tavsiya)${NC} — brauzer ochiladi, .p8 fayl avtomatik aniqlanadi"
-  echo -e "    ${CYAN}2${NC}) Qo'lda kiritish — Key ID, Issuer ID va .p8 yo'lini siz yozasiz"
-  echo -e "    ${CYAN}3${NC}) Bekor qilish"
-  echo
-  read -p "  Tanlang [1-3]: " choice
-  case "$choice" in
-    1|"") appstore_setup_wizard "$current_bundle" || return 1 ;;
-    2)    setup_appstore_credentials "$current_bundle" || return 1 ;;
-    *)    return 1 ;;
-  esac
+  appstore_pick_account_for_project "$current_bundle" || return 1
 }
 
 # ExportOptions.plist mavjudligini ta'minlash (yo'q bo'lsa, yaratish)
@@ -1225,19 +1302,29 @@ upload_to_appstore() {
     return 1
   fi
 
-  # Loyihaning bundle id'ini aniqlash va per-bundle config'dan o'qish
-  local bundle_id kid iid
+  # Bundle → akkaunt → key resolve
+  local bundle_id account kid iid
   bundle_id=$(detect_ios_bundle_id)
   if [ -z "$bundle_id" ]; then
     err "iOS bundle id aniqlanmadi"
     return 1
   fi
 
-  kid=$(appstore_project_config_get "$bundle_id" "key_id")
-  iid=$(appstore_project_config_get "$bundle_id" "issuer_id")
+  account=$(appstore_project_config_get "$bundle_id" "account")
+  if [ -z "$account" ]; then
+    err "Bundle '${bundle_id}' uchun akkaunt belgilanmagan"
+    return 1
+  fi
+  if ! appstore_account_exists "$account"; then
+    err "Akkaunt '${account}' topilmadi"
+    return 1
+  fi
+
+  kid=$(appstore_account_get "$account" "key_id")
+  iid=$(appstore_account_get "$account" "issuer_id")
 
   if [ -z "$kid" ] || [ -z "$iid" ]; then
-    err "App Store Connect API sozlanmagan (bundle: ${bundle_id})"
+    err "App Store Connect API sozlanmagan (akkaunt: ${account})"
     return 1
   fi
 
@@ -1281,10 +1368,18 @@ upload_to_appstore() {
 # Direct Google Play Developer API (curl + openssl, hech qanday Ruby/Python/Node yo'q)
 # JWT RS256 signing pure bash'da, base64url encoding RFC 7515 ga muvofiq.
 
-# Config yo'llari — v1.5.0 dan boshlab PER-PROJECT (package_name kalit)
+# Config yo'llari — v1.6.0 dan boshlab Named Accounts (AWS profile patterni)
+# Loyiha: ~/.config/flutter-build-tool/play/<package>.json  → account nomiga havola
+# Akkaunt: ~/.config/flutter-build-tool/accounts/play/<account>.json → SA credentials
 play_config_dir()      { echo "${HOME}/.config/flutter-build-tool"; }
 play_projects_dir()    { echo "$(play_config_dir)/play"; }
+play_accounts_dir()    { echo "$(play_config_dir)/accounts/play"; }
 play_legacy_config()   { echo "$(play_config_dir)/play_store.json"; }
+
+# Akkaunt nomini fayl tizimiga xavfsiz qilish (faqat alnum, dash, underscore)
+sanitize_account_name() {
+  printf '%s' "$1" | tr -c 'a-zA-Z0-9_-' '_' | cut -c 1-64
+}
 
 # Per-project config fayli (package_name bo'yicha)
 play_project_config_file() {
@@ -1302,9 +1397,9 @@ play_project_config_get() {
     | sed -E "s/.*\"${key}\"[[:space:]]*:[[:space:]]*\"([^\"]*)\".*/\1/"
 }
 
-# Loyiha konfiguratsiyasini saqlash
+# Loyiha konfiguratsiyasini saqlash (v1.6.0: account nomi orqali havola)
 play_project_config_save() {
-  local pkg="$1" sa_path="$2" track="$3"
+  local pkg="$1" account="$2" track="$3"
   local file dir
   file=$(play_project_config_file "$pkg")
   dir=$(dirname "$file")
@@ -1312,7 +1407,7 @@ play_project_config_save() {
   chmod 700 "$dir"
   cat > "$file" <<JSON
 {
-  "service_account_path": "${sa_path}",
+  "account": "${account}",
   "package_name": "${pkg}",
   "track": "${track}"
 }
@@ -1320,7 +1415,79 @@ JSON
   chmod 600 "$file"
 }
 
-# Eski yagona-fayl formatdan per-project formatga migratsiya (idempotent)
+# ─── Akkaunt funksiyalari (v1.6.0+) ─────────────────────
+
+# Akkaunt fayli yo'li
+play_account_file() {
+  local name="$1"
+  echo "$(play_accounts_dir)/${name}.json"
+}
+
+# Akkaunt mavjudligini tekshirish
+play_account_exists() {
+  [ -f "$(play_account_file "$1")" ]
+}
+
+# Akkaunt field'ini o'qish
+play_account_get() {
+  local name="$1" key="$2"
+  local file
+  file=$(play_account_file "$name")
+  [ ! -f "$file" ] && return 1
+  grep -E "\"${key}\"" "$file" | head -1 \
+    | sed -E "s/.*\"${key}\"[[:space:]]*:[[:space:]]*\"([^\"]*)\".*/\1/"
+}
+
+# Akkauntni saqlash — SA JSON dan client_email va project_id avtomatik o'qiladi
+play_account_save() {
+  local name="$1" sa_path="$2"
+  local file dir client_email project_id
+  file=$(play_account_file "$name")
+  dir=$(dirname "$file")
+  mkdir -p "$dir"
+  chmod 700 "$dir"
+
+  client_email=$(sa_json_get_simple "$sa_path" "client_email")
+  project_id=$(sa_json_get_simple "$sa_path" "project_id")
+
+  cat > "$file" <<JSON
+{
+  "name": "${name}",
+  "service_account_path": "${sa_path}",
+  "client_email": "${client_email}",
+  "project_id": "${project_id}"
+}
+JSON
+  chmod 600 "$file"
+}
+
+# Akkaunt nomini SA JSON'dan derive qilish — project_id eng ma'noli
+play_derive_account_name() {
+  local sa_path="$1"
+  local pid
+  pid=$(sa_json_get_simple "$sa_path" "project_id")
+  if [ -n "$pid" ]; then
+    sanitize_account_name "$pid"
+  else
+    sanitize_account_name "$(basename "$sa_path" .json)"
+  fi
+}
+
+# Barcha akkauntlar ro'yxati
+play_list_accounts() {
+  local dir
+  dir=$(play_accounts_dir)
+  [ ! -d "$dir" ] && return 0
+  local f
+  for f in "$dir"/*.json; do
+    [ -f "$f" ] || continue
+    basename "$f" .json
+  done
+}
+
+# ─── Migratsiyalar ──────────────────────────────────────
+
+# v1.4.x yagona-fayl formatdan per-project formatga (idempotent)
 play_migrate_legacy_config() {
   local old
   old=$(play_legacy_config)
@@ -1340,37 +1507,77 @@ play_migrate_legacy_config() {
   track=$(grep '"track"' "$old" \
     | sed -E 's/.*"track"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/' | head -1)
 
-  local new
-  new=$(play_project_config_file "$old_pkg")
-  if [ ! -f "$new" ]; then
-    play_project_config_save "$old_pkg" "$sa_path" "${track:-internal}"
-    info "Eski sozlama yangi formatga ko'chirildi: ${old_pkg}"
+  # v1.6.0 schema: akkaunt yaratamiz, keyin loyiha unga havola qiladi
+  if [ -n "$sa_path" ] && [ -f "$sa_path" ]; then
+    local account
+    account=$(play_derive_account_name "$sa_path")
+    play_account_exists "$account" || play_account_save "$account" "$sa_path"
+
+    local new
+    new=$(play_project_config_file "$old_pkg")
+    if [ ! -f "$new" ]; then
+      play_project_config_save "$old_pkg" "$account" "${track:-internal}"
+      info "v1.4.x sozlamasi yangi formatga ko'chirildi: ${old_pkg} → ${account}"
+    fi
   fi
 
   mv "$old" "${old}.legacy.$(date +%s)" 2>/dev/null || true
 }
 
-# Boshqa loyihalardan saqlangan Service Account JSON ni topish
-# (cross-project reuse uchun: bitta SA ko'p loyihaga xizmat qilishi mumkin)
-play_find_existing_sa() {
+# v1.5.0 (service_account_path bevosita) → v1.6.0 (account havolasi)
+# Idempotent: faqat eski format topilsa o'tkazadi.
+play_migrate_v15_to_v16() {
   local dir
   dir=$(play_projects_dir)
-  [ ! -d "$dir" ] && return 1
+  [ ! -d "$dir" ] && return 0
 
-  local f sa
+  local f
   for f in "$dir"/*.json; do
     [ -f "$f" ] || continue
-    sa=$(grep '"service_account_path"' "$f" 2>/dev/null \
-      | sed -E 's/.*"service_account_path"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/' | head -1)
-    if [ -n "$sa" ] && [ -f "$sa" ]; then
-      echo "$sa"
-      return 0
+    # v1.5.0 detector: "service_account_path" bor lekin "account" yo'q
+    grep -q '"service_account_path"' "$f" 2>/dev/null || continue
+    grep -q '"account"' "$f" 2>/dev/null && continue
+
+    local pkg sa_path track
+    pkg=$(grep '"package_name"' "$f" | sed -E 's/.*"package_name"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/' | head -1)
+    sa_path=$(grep '"service_account_path"' "$f" | sed -E 's/.*"service_account_path"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/' | head -1)
+    track=$(grep '"track"' "$f" | sed -E 's/.*"track"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/' | head -1)
+    [ -z "$pkg" ] && continue
+    [ -z "$sa_path" ] && continue
+
+    # Avval v1.5.0 ni .v15 backup'ga ko'chiramiz
+    cp "$f" "${f}.v15.$(date +%s)" 2>/dev/null || true
+
+    # Akkaunt yaratish (yoki mavjudidan foydalanish)
+    local account
+    if [ -f "$sa_path" ]; then
+      account=$(play_derive_account_name "$sa_path")
+      play_account_exists "$account" || play_account_save "$account" "$sa_path"
+    else
+      # SA fayli yo'q — orphan account yaratamiz, foydalanuvchi keyin tuzatishi mumkin
+      account=$(sanitize_account_name "$(basename "$sa_path" .json)")
+      play_account_exists "$account" || {
+        mkdir -p "$(play_accounts_dir)"
+        chmod 700 "$(play_accounts_dir)"
+        cat > "$(play_account_file "$account")" <<JSON
+{
+  "name": "${account}",
+  "service_account_path": "${sa_path}",
+  "client_email": "",
+  "project_id": ""
+}
+JSON
+        chmod 600 "$(play_account_file "$account")"
+      }
     fi
+
+    # Project file'ni v1.6.0 formatga qayta yozish
+    play_project_config_save "$pkg" "$account" "${track:-internal}"
+    info "v1.5.0 → v1.6.0: ${pkg} → akkaunt '${account}'"
   done
-  return 1
 }
 
-# Sozlangan barcha loyihalarni ro'yxati (debug uchun)
+# Sozlangan barcha loyihalarni ro'yxati (debug)
 play_list_projects() {
   local dir
   dir=$(play_projects_dir)
@@ -1378,10 +1585,11 @@ play_list_projects() {
   local f
   for f in "$dir"/*.json; do
     [ -f "$f" ] || continue
-    local pkg track
+    local pkg track account
     pkg=$(basename "$f" .json)
+    account=$(grep '"account"' "$f" | sed -E 's/.*"account"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/' | head -1)
     track=$(grep '"track"' "$f" | sed -E 's/.*"track"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/' | head -1)
-    echo "  • ${pkg} → ${track}"
+    echo "  • ${pkg} → ${account} → ${track}"
   done
 }
 
@@ -1499,227 +1707,250 @@ detect_android_package_name() {
   echo "$pkg"
 }
 
-# Loyihaga oid konfiguratsiyani ko'rsatish
-show_play_project_config() {
-  local pkg="$1"
-  local sa_path track sa_email
-  sa_path=$(play_project_config_get "$pkg" "service_account_path")
-  track=$(play_project_config_get "$pkg" "track")
-  sa_email=""
-  [ -f "$sa_path" ] && sa_email=$(sa_json_get_simple "$sa_path" "client_email")
+# ─── v1.6.0 Account-asosli sozlash flow ─────────────────────
 
-  echo
-  echo -e "  ${BOLD}╭─ Google Play Store (loyiha: ${pkg}) ─${NC}"
-  printf  "  ${BOLD}│${NC}  ${CYAN}%-14s${NC} ${YELLOW}%s${NC}\n" "Track"       "$track"
-  printf  "  ${BOLD}│${NC}  ${CYAN}%-14s${NC} ${YELLOW}%s${NC}\n" "Service Acc" "$sa_email"
-  printf  "  ${BOLD}│${NC}  ${CYAN}%-14s${NC} ${YELLOW}%s${NC}\n" "Key path"    "$sa_path"
-  echo -e "  ${BOLD}╰────────────────────────────────────────────────${NC}"
-}
+# playstore_wizard_download_sa: brauzer + polling orqali SA JSON ni topish.
+# Hech narsa saqlamaydi — faqat fayl yo'lini stdout'ga qaytaradi.
+# (avvalgi to'liq wizard'dan ajratilgan toza komponent)
+playstore_wizard_download_sa() {
+  info "─ [1/4] Google Play Android Developer API ni yoqing ──" >&2
+  info "Brauzerda Cloud Console API library ochiladi..." >&2
+  info "Sahifada: ${BOLD}Enable${NC} tugmasini bosing" >&2
+  echo >&2
 
-# Interaktiv sozlash (per-project)
-# Argument: package_name (ixtiyoriy — yo'q bo'lsa, hozirgi loyihadan auto-detect qiladi)
-setup_play_credentials() {
-  local target_pkg="$1"
-  if [ -z "$target_pkg" ]; then
-    target_pkg=$(detect_android_package_name)
-  fi
-  if [ -z "$target_pkg" ]; then
-    err "Package name aniqlanmadi va kiritilmadi"
-    return 1
-  fi
-
-  step "Google Play Service Account sozlash — ${target_pkg}"
-  info "Sozlash bosqichlari README'da: '## Android Play Store deploy'"
-  info "1) Google Cloud Console'da Service Account yarating"
-  info "2) JSON Key fayl yuklab oling"
-  info "3) Play Console'da Service Account'ga Releases ruxsatlari bering"
-  echo
-
-  local sa_path
-  read -p "    Service Account JSON yo'li: " sa_path
-  sa_path="${sa_path/#\~/$HOME}"
-
-  if [ ! -f "$sa_path" ]; then
-    err "Fayl topilmadi: $sa_path"
-    return 1
-  fi
-
-  # JSON tuzilishini tasdiqlash
-  local client_email
-  client_email=$(sa_json_get_simple "$sa_path" "client_email")
-  if [[ ! "$client_email" =~ \.iam\.gserviceaccount\.com$ ]]; then
-    err "Bu Service Account JSON ko'rinmaydi (client_email noto'g'ri)"
-    return 1
-  fi
-  ok "Service Account aniqlandi: $client_email"
-
-  # Standart joyga ko'chirish taklif
-  local std_path="${HOME}/.config/flutter-build-tool/play_store_key.json"
-  if [ "$sa_path" != "$std_path" ]; then
-    echo
-    read -p "    Standart joyga ko'chirib qo'yaymi (${std_path})? (y/n) [y]: " move
-    if [[ ! "$move" =~ ^[Nn]$ ]]; then
-      mkdir -p "$(dirname "$std_path")"
-      chmod 700 "$(dirname "$std_path")"
-      cp "$sa_path" "$std_path"
-      chmod 600 "$std_path"
-      sa_path="$std_path"
-      ok "Ko'chirildi: $std_path"
-    fi
-  fi
-
-  # Track
-  echo
-  info "Mavjud track'lar: internal, alpha, beta, production"
-  info "Tavsiya: 'internal' (darrov publish, faqat ichki testerlar)"
-  read -p "    Default track [internal]: " track
-  track="${track:-internal}"
-
-  # Per-project saqlash
-  play_project_config_save "$target_pkg" "$sa_path" "$track"
-  ok "Sozlandi: $(play_project_config_file "$target_pkg")"
-}
-
-# Sozlamalar mavjudligini ta'minlash
-# Avtomatik wizard — brauzerni ochib, JSON faylni avtomatik aniqlab, sozlash
-# Argument: package_name (ixtiyoriy — yo'q bo'lsa, hozirgi loyihadan auto-detect)
-playstore_setup_wizard() {
-  local target_pkg="$1"
-  if [ -z "$target_pkg" ]; then
-    target_pkg=$(detect_android_package_name)
-  fi
-  if [ -z "$target_pkg" ]; then
-    err "Package name aniqlanmadi (build.gradle topilmadi)"
-    return 1
-  fi
-
-  step "Google Play API avtomatik sozlash — ${target_pkg}"
-  echo
-
-  # [1/4] API yoqish
-  info "─ [1/4] Google Play Android Developer API ni yoqing ──"
-  info "Brauzerda Cloud Console API library ochiladi..."
-  echo
-  info "Sahifada: ${BOLD}Enable${NC} tugmasini bosing (allaqachon yoqilgan bo'lsa shunday qoldiring)"
-  echo
-
-  open_url "https://console.cloud.google.com/apis/library/androidpublisher.googleapis.com"
+  open_url "https://console.cloud.google.com/apis/library/androidpublisher.googleapis.com" >&2
   read -p "  Yoqilgandan keyin Enter bosing: " _
 
-  # [2/4] Service Account yaratish
-  echo
-  info "─ [2/4] Service Account yarating ─────────────────────"
-  info "Brauzerda Service Accounts sahifasi ochiladi..."
-  echo
-  info "Sahifada:"
-  info "  1) ${BOLD}+ Create Service Account${NC} tugmasini bosing"
-  info "  2) Name: ${BOLD}flutter-build-deploy${NC}"
-  info "  3) Description: ixtiyoriy"
-  info "  4) ${BOLD}Create and Continue${NC}"
-  info "  5) 'Grant access' qadamini ${BOLD}skip${NC} qiling (Done bosing)"
-  echo
+  echo >&2
+  info "─ [2/4] Service Account yarating ─────────────────────" >&2
+  info "Brauzerda Service Accounts sahifasi ochiladi..." >&2
+  info "  1) ${BOLD}+ Create Service Account${NC}" >&2
+  info "  2) Name: ${BOLD}flutter-build-deploy${NC}" >&2
+  info "  3) ${BOLD}Done${NC} (Grant access qadamini skip)" >&2
+  echo >&2
 
-  open_url "https://console.cloud.google.com/iam-admin/serviceaccounts"
+  open_url "https://console.cloud.google.com/iam-admin/serviceaccounts" >&2
   read -p "  Yaratganingizdan keyin Enter bosing: " _
 
-  # [3/4] JSON Key yuklab olish
-  echo
-  info "─ [3/4] JSON Key yuklab oling ────────────────────────"
-  info "Yaratilgan Service Account'ga kiring:"
-  info "  1) ${BOLD}Keys${NC} tab → ${BOLD}Add Key${NC} → ${BOLD}Create new key${NC}"
-  info "  2) ${BOLD}JSON${NC} tanlang → ${BOLD}Create${NC}"
-  info "  3) Fayl avtomatik Downloads'ga yuklanadi"
-  echo
+  echo >&2
+  info "─ [3/4] JSON Key yuklab oling ────────────────────────" >&2
+  info "Service Account'ga kiring:" >&2
+  info "  1) ${BOLD}Keys${NC} → ${BOLD}Add Key${NC} → ${BOLD}Create new key${NC}" >&2
+  info "  2) ${BOLD}JSON${NC} → ${BOLD}Create${NC}" >&2
+  info "  3) Fayl Downloads'ga yuklanadi" >&2
+  echo >&2
 
   local marker="/tmp/.fbt_play.$$"
   touch "$marker"
-
   read -p "  Tayyor bo'lsangiz Enter bosing: " _
-  echo
+  echo >&2
 
-  # JSON faylni topish — Service Account marker bilan
+  # JSON faylni topish (Service Account marker bilan filter)
   local sa_candidate sa_file
-  local found_count=0
   for sa_candidate in $(find "$HOME/Downloads" -maxdepth 1 -name "*.json" \
       -newer "$marker" 2>/dev/null); do
     if grep -q '"type": "service_account"' "$sa_candidate" 2>/dev/null; then
       sa_file="$sa_candidate"
-      found_count=$((found_count + 1))
     fi
   done
   rm -f "$marker"
 
   if [ -z "$sa_file" ]; then
-    warn "Service Account JSON Downloads'da topilmadi"
-    info "Faylni qo'lda ko'rsating yoki bekor qiling"
+    warn "Service Account JSON Downloads'da topilmadi" >&2
     read -p "  Fayl yo'li (Enter — bekor): " sa_file
     sa_file="${sa_file/#\~/$HOME}"
-    [ -z "$sa_file" ] && { warn "Bekor qilindi"; return 1; }
-    [ ! -f "$sa_file" ] && { err "Fayl topilmadi: $sa_file"; return 1; }
+    [ -z "$sa_file" ] && { warn "Bekor qilindi" >&2; return 1; }
+    [ ! -f "$sa_file" ] && { err "Fayl topilmadi: $sa_file" >&2; return 1; }
   fi
 
-  # JSON dan info chiqarish
-  local client_email project_id
+  # JSON tuzilishini tasdiqlash
+  local client_email
   client_email=$(sa_json_get_simple "$sa_file" "client_email")
-  project_id=$(sa_json_get_simple "$sa_file" "project_id")
-
   if [[ ! "$client_email" =~ \.iam\.gserviceaccount\.com$ ]]; then
-    err "Bu Service Account JSON ko'rinmaydi: $sa_file"
+    err "Bu Service Account JSON ko'rinmaydi: $sa_file" >&2
     return 1
   fi
+  ok "JSON aniqlandi: $client_email" >&2
 
-  ok "JSON aniqlandi: $(basename "$sa_file")"
-  ok "Service Account: ${BOLD}${client_email}${NC}"
-  ok "Project: ${BOLD}${project_id}${NC}"
+  # Standart akkaunt papkasiga ko'chirish (har akkaunt o'z faylida)
+  local keys_dir="${HOME}/.config/flutter-build-tool/keys/play"
+  mkdir -p "$keys_dir"
+  chmod 700 "$keys_dir"
 
-  # Standart joyga ko'chirish
-  local target="${HOME}/.config/flutter-build-tool/play_store_key.json"
-  mkdir -p "$(dirname "$target")"
-  chmod 700 "$(dirname "$target")"
+  # Fayl nomini akkaunt nomidan derive qilamiz
+  local default_name
+  default_name=$(play_derive_account_name "$sa_file")
+  local target="${keys_dir}/${default_name}.json"
+
+  # Agar bir xil nomda allaqachon bo'lsa, suffix qo'shamiz
+  if [ -f "$target" ] && [ "$sa_file" != "$target" ]; then
+    target="${keys_dir}/${default_name}-$(date +%s).json"
+  fi
+
   if [ "$sa_file" != "$target" ]; then
     mv "$sa_file" "$target"
     chmod 600 "$target"
-    ok "Ko'chirildi: $target (chmod 600)"
+    ok "Ko'chirildi: $target (chmod 600)" >&2
   fi
 
-  # [4/4] Play Console ruxsatlari
-  echo
-  info "─ [4/4] Play Console ruxsatlari ──────────────────────"
-  info "Brauzerda Play Console API access sahifasi ochiladi..."
-  echo
-  info "Sahifada:"
-  info "  1) ${BOLD}${client_email}${NC} Service Account ro'yxatda paydo bo'lishi kerak"
-  info "  2) ${BOLD}Grant access${NC} ni bosing"
-  info "  3) ${BOLD}App permissions${NC}: faqat sizning app'ingizni tanlang"
-  info "  4) ${BOLD}Account permissions${NC}:"
-  info "       ✓ Releases — Release apps to testing tracks"
-  info "       ✓ Releases — Release to production..."
-  info "       ✓ Store presence — View app information..."
-  info "  5) ${BOLD}Apply${NC} ni bosing"
-  echo
+  # [4/4] Play Console ruxsatlari ko'rsatmasi
+  echo >&2
+  info "─ [4/4] Play Console ruxsatlari ──────────────────────" >&2
+  info "Brauzerda Play Console API access sahifasi ochiladi..." >&2
+  info "  1) ${BOLD}${client_email}${NC} ni toping" >&2
+  info "  2) ${BOLD}Grant access${NC}" >&2
+  info "  3) App permissions: faqat kerakli app'lar" >&2
+  info "  4) Account permissions: ${BOLD}Releases${NC} barchasini yoqing" >&2
+  info "  5) ${BOLD}Apply${NC}" >&2
+  echo >&2
 
-  open_url "https://play.google.com/console/u/0/api-access"
+  open_url "https://play.google.com/console/u/0/api-access" >&2
   read -p "  Apply qilganingizdan keyin Enter bosing: " _
 
-  # Track
-  echo
-  info "─ Sozlamalar ──────────────────────────────────────────"
-  ok "Package name (auto-detected): ${BOLD}${target_pkg}${NC}"
-
-  info "Track'lar: internal (eng tezkor), alpha, beta, production"
-  read -p "    Default track [internal]: " track
-  track="${track:-internal}"
-
-  # Per-project saqlash
-  play_project_config_save "$target_pkg" "$target" "$track"
-
-  echo
-  ok "Play Store sozlandi: $(play_project_config_file "$target_pkg")"
+  # Yagona natija: SA fayl yo'li (stdout)
+  printf '%s\n' "$target"
 }
 
+# Yangi akkaunt qo'shish — wizard yoki qo'lda.
+# Argument: ixtiyoriy package_name — yangi akkaunt yaratilgach loyihaga bog'lanadi.
+play_add_new_account() {
+  local pkg="$1"
+
+  step "Yangi Play Store akkaunti qo'shish"
+  echo
+  echo -e "  ${BOLD}Sozlash usulini tanlang:${NC}"
+  echo -e "    ${CYAN}1${NC}) Avtomatik wizard ${GREEN}(tavsiya)${NC} — brauzer ochiladi, JSON auto-detect"
+  echo -e "    ${CYAN}2${NC}) Qo'lda kiritish — JSON yo'lini siz yozasiz"
+  echo
+  read -p "  Tanlang [1-2]: " choice
+
+  local sa_path
+  case "$choice" in
+    1|"")
+      sa_path=$(playstore_wizard_download_sa) || return 1
+      ;;
+    2)
+      read -p "    Service Account JSON yo'li: " sa_path
+      sa_path="${sa_path/#\~/$HOME}"
+      if [ ! -f "$sa_path" ]; then
+        err "Fayl topilmadi: $sa_path"
+        return 1
+      fi
+      local ce
+      ce=$(sa_json_get_simple "$sa_path" "client_email")
+      if [[ ! "$ce" =~ \.iam\.gserviceaccount\.com$ ]]; then
+        err "Bu Service Account JSON ko'rinmaydi"
+        return 1
+      fi
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+
+  # Akkaunt nomi (project_id'dan default)
+  echo
+  local default_name name
+  default_name=$(play_derive_account_name "$sa_path")
+  echo -e "  ${BOLD}Akkaunt nomi${NC} — bu shu credentials'ga foydalanuvchi-do'st label"
+  info "Misol: 'personal', 'work-acme', 'client-xyz'"
+  read -p "  Akkaunt nomi [${default_name}]: " name
+  name="${name:-$default_name}"
+  name=$(sanitize_account_name "$name")
+
+  # Mavjud akkauntni qayta yozmaslik
+  if play_account_exists "$name"; then
+    warn "Akkaunt '${name}' allaqachon mavjud"
+    read -p "  Qayta yozamizmi? (y/n) [n]: " replace
+    [[ ! "$replace" =~ ^[Yy]$ ]] && { warn "Bekor qilindi"; return 1; }
+  fi
+
+  play_account_save "$name" "$sa_path"
+  ok "Akkaunt qo'shildi: ${BOLD}${name}${NC}"
+
+  # Loyihaga bog'lash (agar pkg berilgan bo'lsa)
+  if [ -n "$pkg" ]; then
+    echo
+    local track
+    read -p "    Loyiha '${pkg}' uchun default track [internal]: " track
+    track="${track:-internal}"
+    play_project_config_save "$pkg" "$name" "$track"
+    ok "Loyiha bog'landi: ${pkg} → '${name}' → ${track}"
+  fi
+}
+
+# Akkaunt picker — mavjud akkauntlardan birini tanlash yoki yangi qo'shish.
+# Tanlangan akkaunt loyihaga bog'lanadi.
+play_pick_account_for_project() {
+  local pkg="$1"
+
+  # Mavjud akkauntlar ro'yxati
+  local accounts=()
+  local name
+  while IFS= read -r name; do
+    [ -n "$name" ] && accounts+=("$name")
+  done < <(play_list_accounts)
+
+  # Bo'sh bo'lsa darrov yangi yaratamiz
+  if [ ${#accounts[@]} -eq 0 ]; then
+    info "Hali Play Store akkaunti qo'shilmagan"
+    play_add_new_account "$pkg"
+    return $?
+  fi
+
+  # Picker UI
+  echo
+  echo -e "  ${BOLD}╭─ Mavjud Play Store akkauntlari ─────────────────────${NC}"
+  local i=1 acc_name email
+  for acc_name in "${accounts[@]}"; do
+    email=$(play_account_get "$acc_name" "client_email")
+    printf "  ${BOLD}│${NC}  ${CYAN}%d${NC}) ${BOLD}%-22s${NC} %s\n" "$i" "$acc_name" "$email"
+    i=$((i + 1))
+  done
+  echo -e "  ${BOLD}├──────────────────────────────────────────────────────${NC}"
+  printf  "  ${BOLD}│${NC}  ${CYAN}%d${NC}) ${GREEN}➕ Yangi akkaunt qo'shish${NC}\n" "$i"
+  local cancel_i=$((i + 1))
+  printf  "  ${BOLD}│${NC}  ${CYAN}%d${NC}) Bekor qilish\n" "$cancel_i"
+  echo -e "  ${BOLD}╰──────────────────────────────────────────────────────${NC}"
+  echo
+
+  read -p "  Loyiha '${pkg}' uchun akkaunt tanlang [1-${cancel_i}]: " choice
+
+  if ! [[ "$choice" =~ ^[0-9]+$ ]]; then
+    warn "Bekor qilindi"
+    return 1
+  fi
+
+  # Mavjud akkaunt tanlandi
+  if [ "$choice" -ge 1 ] && [ "$choice" -le "${#accounts[@]}" ]; then
+    local picked="${accounts[$((choice - 1))]}"
+    info "Akkaunt tanlandi: ${BOLD}${picked}${NC}"
+    local track
+    read -p "    Default track [internal]: " track
+    track="${track:-internal}"
+    play_project_config_save "$pkg" "$picked" "$track"
+    ok "Loyiha bog'landi: ${pkg} → '${picked}' → ${track}"
+    return 0
+  fi
+
+  # Yangi akkaunt
+  if [ "$choice" -eq "$i" ]; then
+    play_add_new_account "$pkg"
+    return $?
+  fi
+
+  warn "Bekor qilindi"
+  return 1
+}
+
+# Backwards-compat shim'lar — eski API'ni saqlash uchun
+setup_play_credentials() { play_add_new_account "$1"; }
+playstore_setup_wizard() { play_add_new_account "$1"; }
+
 ensure_play_credentials() {
-  # Eski global config'ni per-project formatga ko'chirish (idempotent)
-  play_migrate_legacy_config
+  # Eski formatlardan migratsiya (idempotent)
+  play_migrate_legacy_config    # v1.4.x → v1.6.0
+  play_migrate_v15_to_v16       # v1.5.0 → v1.6.0
 
   # Hozirgi loyiha package'ini aniqlash
   local current_pkg
@@ -1732,62 +1963,39 @@ ensure_play_credentials() {
   local cfg
   cfg=$(play_project_config_file "$current_pkg")
 
-  # Loyiha allaqachon sozlangan bo'lsa — silent davom etish
+  # Sozlangan loyiha — silent davom etish
   if [ -f "$cfg" ]; then
-    local sa_path track
-    sa_path=$(play_project_config_get "$current_pkg" "service_account_path")
+    local account track
+    account=$(play_project_config_get "$current_pkg" "account")
     track=$(play_project_config_get "$current_pkg" "track")
 
-    # Service Account JSON hali ham mavjudligini tasdiqlash
-    if [ ! -f "$sa_path" ]; then
-      warn "Service Account JSON yo'qolgan: $sa_path"
-      info "Loyiha uchun qayta sozlash kerak"
-      playstore_setup_wizard "$current_pkg" || return 1
+    if [ -z "$account" ]; then
+      warn "Loyiha config buzuq (akkaunt belgilanmagan), qayta sozlaymiz"
+      rm -f "$cfg"
+      # fall through
+    elif ! play_account_exists "$account"; then
+      warn "Akkaunt '${account}' topilmadi — qayta tanlash kerak"
+      play_pick_account_for_project "$current_pkg" || return 1
+      return 0
+    else
+      local sa_path
+      sa_path=$(play_account_get "$account" "service_account_path")
+      if [ ! -f "$sa_path" ]; then
+        warn "Akkaunt '${account}' ning JSON fayli yo'qolgan: $sa_path"
+        info "Akkaunt uchun yangi JSON kerak"
+        play_add_new_account "" || return 1
+        # Akkauntni qayta tanlash
+        play_pick_account_for_project "$current_pkg" || return 1
+        return 0
+      fi
+      ok "Play Store: ${BOLD}${current_pkg}${NC} → '${BOLD}${account}${NC}' → ${YELLOW}${track}${NC} ${CYAN}(saqlangan)${NC}"
       return 0
     fi
-
-    # Hammasi joyida — bir qatorli xulosa, hech qanday tasdiqlash so'ralmaydi
-    ok "Play Store: ${BOLD}${current_pkg}${NC} → ${YELLOW}${track}${NC} ${CYAN}(saqlangan)${NC}"
-    return 0
   fi
 
-  # Yangi loyiha — birinchi marta sozlash
+  # Yangi loyiha — akkaunt picker
   info "Yangi loyiha: ${BOLD}${current_pkg}${NC}"
-
-  # Boshqa loyihadan saqlangan Service Account JSON bormi?
-  local existing_sa
-  if existing_sa=$(play_find_existing_sa 2>/dev/null) && [ -f "$existing_sa" ]; then
-    local sa_email
-    sa_email=$(sa_json_get_simple "$existing_sa" "client_email")
-    echo
-    info "Mavjud Service Account topildi: ${BOLD}${sa_email}${NC}"
-    info "  (fayl: ${existing_sa})"
-    echo
-    read -p "  Shu Service Account'ni bu loyihaga ham ishlataylikmi? (y/n) [y]: " reuse
-    if [[ ! "$reuse" =~ ^[Nn]$ ]]; then
-      info "Track'lar: internal (eng tezkor), alpha, beta, production"
-      local track
-      read -p "    Default track [internal]: " track
-      track="${track:-internal}"
-      play_project_config_save "$current_pkg" "$existing_sa" "$track"
-      ok "Saqlandi: ${current_pkg} → ${track}"
-      return 0
-    fi
-  fi
-
-  # Yangi Service Account kerak
-  echo
-  echo -e "  ${BOLD}Sozlash usulini tanlang:${NC}"
-  echo -e "    ${CYAN}1${NC}) Avtomatik wizard ${GREEN}(tavsiya)${NC} — brauzer ochiladi, JSON Key avtomatik aniqlanadi"
-  echo -e "    ${CYAN}2${NC}) Qo'lda kiritish — JSON yo'lini siz yozasiz"
-  echo -e "    ${CYAN}3${NC}) Bekor qilish"
-  echo
-  read -p "  Tanlang [1-3]: " choice
-  case "$choice" in
-    1|"") playstore_setup_wizard "$current_pkg" || return 1 ;;
-    2)    setup_play_credentials "$current_pkg" || return 1 ;;
-    *)    return 1 ;;
-  esac
+  play_pick_account_for_project "$current_pkg" || return 1
 }
 
 # Build natijasidan AAB faylini topish
@@ -1831,21 +2039,30 @@ upload_to_play_store() {
     return 1
   fi
 
-  # Loyihaning package_name'ini aniqlash va per-project config'dan o'qish
-  local package_name sa_path track
+  # Loyiha → akkaunt → SA path resolve
+  local package_name account sa_path track
   package_name=$(detect_android_package_name)
   if [ -z "$package_name" ]; then
     err "Android applicationId aniqlanmadi"
     return 1
   fi
 
-  sa_path=$(play_project_config_get "$package_name" "service_account_path")
+  account=$(play_project_config_get "$package_name" "account")
   track=$(play_project_config_get "$package_name" "track")
   track="${track:-internal}"
 
+  if [ -z "$account" ]; then
+    err "Loyiha '${package_name}' uchun akkaunt belgilanmagan"
+    return 1
+  fi
+  if ! play_account_exists "$account"; then
+    err "Akkaunt '${account}' topilmadi"
+    return 1
+  fi
+
+  sa_path=$(play_account_get "$account" "service_account_path")
   if [ -z "$sa_path" ] || [ ! -f "$sa_path" ]; then
-    err "Service Account JSON topilmadi: $sa_path"
-    info "Loyiha '${package_name}' uchun sozlama yo'q yoki yo'qolgan"
+    err "Akkaunt '${account}' ning JSON fayli topilmadi: $sa_path"
     return 1
   fi
   if [ ! -f "$aab" ]; then
