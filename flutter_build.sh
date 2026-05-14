@@ -50,6 +50,12 @@ warn() { echo -e "  ${YELLOW}⚠${NC} $1"; }
 err()  { echo -e "  ${RED}✗${NC} $1"; }
 info() { echo -e "  ${CYAN}ℹ${NC} $1"; }
 
+# pause — foydalanuvchi Enter bosishini kutish (menyu o'qilishi uchun)
+pause() {
+  echo
+  read -p "  ${1:-Davom etish uchun Enter...}" _
+}
+
 # try_this — xatodan keyin foydalanuvchiga aniq recovery buyrug'(lar)ni ko'rsatish.
 # Foydalanish: try_this "cmd1" ["cmd2" ...]
 # Bir necha buyruqni ketma-ket bermoq mumkin.
@@ -982,6 +988,241 @@ settings_factory_reset() {
   read -p "  Davom etish uchun Enter..." _
 }
 
+# ─── Asosiy menyu (v1.10.0) ─────────────────────────────
+
+# Asosiy menyu — flutter-build (flag'siz) ishga tushganda ko'rinadi
+# Foydalanuvchi tanlovni amalga oshiradi, tugaganda menyu qaytadi
+main_menu() {
+  while true; do
+    banner "Flutter Build Tool — Asosiy menu (v${SCRIPT_VERSION})"
+
+    echo -e "  ${BOLD}╭─ Tanlovingiz ───────────────────────────────────────────╮${NC}"
+    echo -e "  ${BOLD}│${NC}  ${CYAN}1${NC}) ${BOLD}🚀 Build${NC} (asosiy oqim)                              ${BOLD}│${NC}"
+    echo -e "  ${BOLD}│${NC}  ${CYAN}2${NC}) ⚙️  Sozlamalar                                          ${BOLD}│${NC}"
+    echo -e "  ${BOLD}│${NC}  ${CYAN}3${NC}) 🩺 Doctor (tizim tekshiruvi)                            ${BOLD}│${NC}"
+    echo -e "  ${BOLD}│${NC}  ${CYAN}4${NC}) ⬆️  Android track promotion                              ${BOLD}│${NC}"
+    echo -e "  ${BOLD}│${NC}  ${CYAN}5${NC}) 📊 Rollout foizini oshirish                              ${BOLD}│${NC}"
+    echo -e "  ${BOLD}│${NC}  ${CYAN}6${NC}) 📋 Akkauntlar va loyihalarni ko'rish                     ${BOLD}│${NC}"
+    echo -e "  ${BOLD}├─────────────────────────────────────────────────────────${NC}"
+    echo -e "  ${BOLD}│${NC}  ${CYAN}q${NC}) Chiqish                                                   ${BOLD}│${NC}"
+    echo -e "  ${BOLD}╰─────────────────────────────────────────────────────────${NC}"
+    echo
+    read -p "  Tanlang [1-6, q] [1]: " choice
+    choice="${choice:-1}"
+
+    case "$choice" in
+      1)
+        # Build flow — main_build_flow chaqiriladi (skript pastida aniqlangan)
+        if main_build_flow; then
+          # Build muvaffaqiyatli — skript chiqadi
+          exit 0
+        else
+          # Bekor qilindi yoki xato — menyu'ga qaytamiz
+          echo
+          warn "Build bekor qilindi yoki xato berdi — menyu'ga qaytdik"
+          pause
+        fi
+        ;;
+      2)
+        settings_main_menu
+        ;;
+      3)
+        run_diagnostics
+        pause
+        ;;
+      4)
+        menu_promote_interactive
+        ;;
+      5)
+        menu_rollout_interactive
+        ;;
+      6)
+        menu_view_accounts_and_projects
+        ;;
+      q|Q)
+        info "Xayr!"
+        exit 0
+        ;;
+      *)
+        warn "Noto'g'ri tanlov: '$choice'"
+        sleep 1
+        ;;
+    esac
+  done
+}
+
+# Interaktiv Android track promotion (--promote-android'ning menyu varianti)
+menu_promote_interactive() {
+  banner "Android Play Store track promotion"
+
+  if [ ! -f "pubspec.yaml" ]; then
+    err "pubspec.yaml topilmadi"
+    info "Flutter loyihasi ildizidan ishga tushiring"
+    pause
+    return 0
+  fi
+
+  echo
+  info "Track'lar: internal, alpha, beta, production"
+  echo
+  echo -e "  ${BOLD}Tipik strategiyalar:${NC}"
+  echo -e "    ${CYAN}1${NC}) internal → production"
+  echo -e "    ${CYAN}2${NC}) internal → beta"
+  echo -e "    ${CYAN}3${NC}) beta → production"
+  echo -e "    ${CYAN}4${NC}) Custom (siz kiritasiz)"
+  echo -e "    ${CYAN}b${NC}) Orqaga"
+  echo
+  read -p "  Tanlang [1-4, b]: " strat
+
+  local from to
+  case "$strat" in
+    1) from="internal"; to="production" ;;
+    2) from="internal"; to="beta" ;;
+    3) from="beta"; to="production" ;;
+    4)
+      read -p "    Source track: " from
+      read -p "    Target track: " to
+      ;;
+    b|B|"") return 0 ;;
+    *) warn "Noto'g'ri tanlov"; sleep 1; return 0 ;;
+  esac
+
+  if ! [[ "$from" =~ ^(internal|alpha|beta|production)$ ]]; then
+    err "Noto'g'ri source track: $from"
+    pause
+    return 0
+  fi
+  if ! [[ "$to" =~ ^(internal|alpha|beta|production)$ ]]; then
+    err "Noto'g'ri target track: $to"
+    pause
+    return 0
+  fi
+
+  local fraction="1.0"
+  if [ "$to" = "production" ]; then
+    echo
+    read -p "  Production rollout (1-100%) [10]: " pct
+    pct="${pct:-10}"
+    if [[ "$pct" =~ ^[0-9]+$ ]] && [ "$pct" -ge 1 ] && [ "$pct" -le 100 ]; then
+      fraction=$(awk "BEGIN{printf \"%.4f\", $pct / 100}")
+    fi
+  fi
+
+  play_promote_release "$from" "$to" "$fraction"
+  pause
+}
+
+# Interaktiv rollout oshirish (--increase-rollout'ning menyu varianti)
+menu_rollout_interactive() {
+  banner "Production rollout foizini oshirish"
+
+  if [ ! -f "pubspec.yaml" ]; then
+    err "pubspec.yaml topilmadi"
+    pause
+    return 0
+  fi
+
+  echo
+  echo -e "  ${BOLD}Yangi rollout foizi:${NC}"
+  echo -e "    ${CYAN}1${NC}) 25%"
+  echo -e "    ${CYAN}2${NC}) 50%"
+  echo -e "    ${CYAN}3${NC}) 75%"
+  echo -e "    ${CYAN}4${NC}) 100% (to'liq rollout)"
+  echo -e "    ${CYAN}5${NC}) Custom %"
+  echo -e "    ${CYAN}b${NC}) Orqaga"
+  echo
+  read -p "  Tanlang [1-5, b]: " pick
+
+  local pct
+  case "$pick" in
+    1) pct=25 ;;
+    2) pct=50 ;;
+    3) pct=75 ;;
+    4) pct=100 ;;
+    5) read -p "  Foiz (1-100): " pct ;;
+    b|B|"") return 0 ;;
+    *) warn "Noto'g'ri tanlov"; sleep 1; return 0 ;;
+  esac
+
+  play_increase_rollout "$pct"
+  pause
+}
+
+# Akkauntlar va loyihalar ro'yxati (read-only)
+menu_view_accounts_and_projects() {
+  banner "Akkauntlar va loyihalar"
+
+  echo
+  echo -e "  ${BOLD}Play Store akkauntlari:${NC}"
+  local count=0 name email
+  local play_acc_dir="${HOME}/.config/flutter-build-tool/accounts/play"
+  if [ -d "$play_acc_dir" ]; then
+    for f in "$play_acc_dir"/*.json; do
+      [ -f "$f" ] || continue
+      name=$(basename "$f" .json)
+      email=$(grep '"client_email"' "$f" 2>/dev/null | sed -E 's/.*"client_email"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/' | head -1)
+      printf "    • ${CYAN}%-20s${NC} %s\n" "$name" "$email"
+      count=$((count + 1))
+    done
+  fi
+  [ "$count" -eq 0 ] && echo -e "    ${YELLOW}(yo'q)${NC}"
+
+  echo
+  echo -e "  ${BOLD}App Store akkauntlari:${NC}"
+  count=0
+  local app_acc_dir="${HOME}/.config/flutter-build-tool/accounts/appstore"
+  if [ -d "$app_acc_dir" ]; then
+    for f in "$app_acc_dir"/*.json; do
+      [ -f "$f" ] || continue
+      name=$(basename "$f" .json)
+      local kid iid
+      kid=$(grep '"key_id"' "$f" | sed -E 's/.*"key_id"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/' | head -1)
+      iid=$(grep '"issuer_id"' "$f" | sed -E 's/.*"issuer_id"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/' | head -1)
+      printf "    • ${CYAN}%-20s${NC} Key %s / %s…\n" "$name" "$kid" "${iid:0:8}"
+      count=$((count + 1))
+    done
+  fi
+  [ "$count" -eq 0 ] && echo -e "    ${YELLOW}(yo'q)${NC}"
+
+  echo
+  echo -e "  ${BOLD}Sozlangan loyihalar (Play Store):${NC}"
+  count=0
+  local play_proj_dir="${HOME}/.config/flutter-build-tool/play"
+  if [ -d "$play_proj_dir" ]; then
+    for f in "$play_proj_dir"/*.json; do
+      [ -f "$f" ] || continue
+      local pkg account track flow
+      pkg=$(basename "$f" .json)
+      account=$(grep '"account"' "$f" | sed -E 's/.*"account"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/' | head -1)
+      track=$(grep '"track"' "$f" | sed -E 's/.*"track"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/' | head -1)
+      flow=$(grep '"promotion_flow"' "$f" | sed -E 's/.*"promotion_flow"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/' | head -1)
+      printf "    • ${CYAN}%-30s${NC} → ${BOLD}%s${NC} → %s (%s)\n" "$pkg" "$account" "$track" "${flow:-internal_to_prod}"
+      count=$((count + 1))
+    done
+  fi
+  [ "$count" -eq 0 ] && echo -e "    ${YELLOW}(yo'q)${NC}"
+
+  echo
+  echo -e "  ${BOLD}Sozlangan loyihalar (App Store):${NC}"
+  count=0
+  local app_proj_dir="${HOME}/.config/flutter-build-tool/appstore"
+  if [ -d "$app_proj_dir" ]; then
+    for f in "$app_proj_dir"/*.json; do
+      [ -f "$f" ] || continue
+      local bundle account
+      bundle=$(basename "$f" .json)
+      account=$(grep '"account"' "$f" | sed -E 's/.*"account"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/' | head -1)
+      printf "    • ${CYAN}%-30s${NC} → ${BOLD}%s${NC}\n" "$bundle" "$account"
+      count=$((count + 1))
+    done
+  fi
+  [ "$count" -eq 0 ] && echo -e "    ${YELLOW}(yo'q)${NC}"
+
+  echo
+  info "Tahrirlash: ${BOLD}--settings${NC} → 2) Akkauntlar yoki 3) Loyihalar"
+  pause
+}
+
 # open_url <url>
 #   Brauzerda URL ochish — open_file bilan bir xil platform fallback
 open_url() {
@@ -1360,6 +1601,7 @@ arrow_checkbox() {
   done
   # Keyingi chaqiruv uchun reset (default = bo'sh)
   CHECKBOX_INITIAL=()
+  CHECKBOX_CANCELLED=false
   local cursor=0
 
   # Terminal kengligi va opsiya max uzunligi
@@ -1371,7 +1613,7 @@ arrow_checkbox() {
 
   echo
   echo -e "${BOLD}${BLUE}▶${NC} ${BOLD}${title}${NC}"
-  echo -e "  ${CYAN}↑/↓${NC} ${CYAN}Space${NC} ${CYAN}Enter${NC}"
+  echo -e "  ${CYAN}↑/↓${NC} harakat   ${CYAN}Space${NC} tanlash   ${CYAN}Enter${NC} tasdiqlash   ${CYAN}q${NC}/${CYAN}Esc${NC} bekor"
   echo
 
   tput civis 2>/dev/null
@@ -1407,6 +1649,7 @@ arrow_checkbox() {
     IFS= read -rsn1 key
     case "$key" in
       "")
+        # Enter — tasdiqlash
         break
         ;;
       " ")
@@ -1416,8 +1659,19 @@ arrow_checkbox() {
           checked[$cursor]="true"
         fi
         ;;
+      "q"|"Q")
+        # 'q' bilan bekor qilish
+        CHECKBOX_CANCELLED=true
+        break
+        ;;
       $'\x1b')
-        IFS= read -rsn2 -t 1 rest 2>/dev/null || true
+        # Esc yoki strelka
+        IFS= read -rsn2 -t 0.1 rest 2>/dev/null || rest=""
+        if [ -z "$rest" ]; then
+          # Sof Esc — bekor qilish
+          CHECKBOX_CANCELLED=true
+          break
+        fi
         case "$rest" in
           "[A") cursor=$((cursor - 1)); [ "$cursor" -lt 0 ] && cursor=$((n - 1)) ;;
           "[B") cursor=$((cursor + 1)); [ "$cursor" -ge "$n" ] && cursor=0 ;;
@@ -3476,10 +3730,20 @@ upload_to_play_store() {
   return 0
 }
 
+# ─── Asosiy build oqimi (v1.10.0: funksiyaga o'ralgan) ─────
+# Return codes:
+#   0 — build muvaffaqiyatli
+#   1 — bekor qilindi yoki xato (main_menu'ga qaytadi)
+main_build_flow() {
+
 # ─── Validatsiya ──────────────────────────────────────────
 if [ ! -f "pubspec.yaml" ]; then
   err "pubspec.yaml topilmadi. Skript Flutter loyihasi ildizidan ishga tushishi kerak."
-  exit 1
+  info "Joriy papka: $(pwd)"
+  try_this \
+    "cd <flutter-loyiha-yo'li>" \
+    "flutter-build"
+  return 1
 fi
 
 if ! command -v flutter &> /dev/null; then
@@ -3488,7 +3752,7 @@ if ! command -v flutter &> /dev/null; then
     "Hammasi" "https://docs.flutter.dev/get-started/install"
   info "Yoki agar o'rnatilgan bo'lsa, PATH ga qo'shing:"
   try_this "export PATH=\"\$PATH:\$HOME/development/flutter/bin\""
-  exit 1
+  return 1
 fi
 
 PROJECT_NAME=$(awk -F: '/^name:/{v=$2; sub(/#.*/,"",v); gsub(/[" ]/,"",v); print v; exit}' pubspec.yaml)
@@ -3573,6 +3837,12 @@ arrow_checkbox "Tanlovlar (Debug = Production yoqilmasa)" \
   "App Store Connect upload (Production + iOS bilan)" \
   "Play Store upload (Production + Android + AAB bilan)"
 
+# Bekor qilindimi? (q yoki Esc)
+if [ "${CHECKBOX_CANCELLED:-false}" = "true" ]; then
+  warn "Build bekor qilindi"
+  return 1
+fi
+
 IS_PROD="${CHECKBOX_RESULT[0]}"
 BUILD_ANDROID="${CHECKBOX_RESULT[1]}"
 BUILD_IOS="${CHECKBOX_RESULT[2]}"
@@ -3585,33 +3855,36 @@ if $IS_PROD; then MODE_LABEL="PRODUCTION"; else MODE_LABEL="DEBUG"; fi
 
 if ! $BUILD_ANDROID && ! $BUILD_IOS; then
   err "Hech qaysi platforma tanlanmadi"
-  exit 1
+  info "Space tugmasi bilan Android yoki iOS ni yoqing"
+  return 1
 fi
 
 if $BUILD_IOS && [ "$(uname)" != "Darwin" ]; then
   err "iOS build faqat macOS da ishlaydi"
-  exit 1
+  return 1
 fi
 
 if $DO_APPSTORE_UPLOAD; then
   if ! $IS_PROD; then
     err "App Store upload faqat Production rejimda ishlaydi"
-    exit 1
+    info "Production checkbox'ini ham yoqing"
+    return 1
   fi
   if ! $BUILD_IOS; then
     err "App Store upload uchun iOS tanlanishi kerak"
-    exit 1
+    return 1
   fi
 fi
 
 if $DO_PLAYSTORE_UPLOAD; then
   if ! $IS_PROD; then
     err "Play Store upload faqat Production rejimda ishlaydi"
-    exit 1
+    info "Production checkbox'ini ham yoqing"
+    return 1
   fi
   if ! $BUILD_ANDROID; then
     err "Play Store upload uchun Android tanlanishi kerak"
-    exit 1
+    return 1
   fi
 fi
 
@@ -3623,17 +3896,22 @@ if $BUILD_ANDROID; then
   arrow_checkbox "Android format (AAB = Play Store, APK = sideload)" \
     "AAB" \
     "APK"
+  if [ "${CHECKBOX_CANCELLED:-false}" = "true" ]; then
+    warn "Build bekor qilindi"
+    return 1
+  fi
   BUILD_AAB="${CHECKBOX_RESULT[0]}"
   BUILD_APK="${CHECKBOX_RESULT[1]}"
 
   if ! $BUILD_AAB && ! $BUILD_APK; then
     err "Android tanlandi, lekin format tanlanmadi (AAB yoki APK)"
-    exit 1
+    return 1
   fi
 
   if $DO_PLAYSTORE_UPLOAD && ! $BUILD_AAB; then
     err "Play Store upload uchun AAB format tanlanishi kerak (APK qabul qilinmaydi)"
-    exit 1
+    info "AAB ni yoqing yoki Play Store upload'ni o'chiring"
+    return 1
   fi
 fi
 
@@ -3696,7 +3974,7 @@ $BUILD_IOS     && echo -e "    iOS           : ${YELLOW}${IOS_VERSION} (${IOS_BU
 $BUILD_ANDROID && echo -e "    Android       : ${YELLOW}${ANDROID_VERSION} (${ANDROID_BUILD})${NC} → ${GREEN}${new_aversion} (${new_abuild})${NC}"
 echo
 read -p "  Davom etamizmi? (y/n): " confirm
-[[ ! "${confirm}" =~ ^[Yy]$ ]] && { warn "Bekor qilindi"; exit 0; }
+[[ ! "${confirm}" =~ ^[Yy]$ ]] && { warn "Bekor qilindi — menyu'ga qaytdik"; return 1; }
 
 # ─── 6. Fayllarni yangilash (faqat o'zgargan bo'lsa) ──────
 step "Versiya fayllari tekshirilmoqda"
@@ -3738,14 +4016,14 @@ fi
 # ─── 7b. App Store upload pre-check (Production + iOS) ────
 if $DO_APPSTORE_UPLOAD; then
   step "App Store Connect upload sozlamalarini tekshirish"
-  ensure_appstore_credentials || { err "App Store Connect sozlanmadi"; exit 1; }
-  ensure_export_options || { err "ExportOptions.plist sozlanmadi"; exit 1; }
+  ensure_appstore_credentials || { err "App Store Connect sozlanmadi"; return 1; }
+  ensure_export_options || { err "ExportOptions.plist sozlanmadi"; return 1; }
 fi
 
 # ─── 7c. Play Store upload pre-check (Production + Android) ─
 if $DO_PLAYSTORE_UPLOAD; then
   step "Play Store upload sozlamalarini tekshirish"
-  ensure_play_credentials || { err "Play Store sozlanmadi"; exit 1; }
+  ensure_play_credentials || { err "Play Store sozlanmadi"; return 1; }
 fi
 
 # ─── 8. Flutter tayyorlash ────────────────────────────────
@@ -3817,7 +4095,8 @@ fi
 if $DO_APPSTORE_UPLOAD; then
   ipa_file=$(find_latest_ipa) || {
     err "IPA fayl topilmadi build/ios/ipa/ ichida"
-    exit 1
+    info "Build muvaffaqiyatli emas yoki ExportOptions.plist xato"
+    return 1
   }
   upload_to_appstore "$ipa_file" || warn "Upload xato berdi — IPA fayl saqlangan: $ipa_file"
 fi
@@ -3826,7 +4105,8 @@ fi
 if $DO_PLAYSTORE_UPLOAD; then
   aab_file=$(find_latest_aab) || {
     err "AAB fayl topilmadi build/app/outputs/bundle/release/ ichida"
-    exit 1
+    info "Build muvaffaqiyatli emas yoki AAB format yoqilmagan"
+    return 1
   }
 
   # Release notes yig'ish (har upload uchun yangi)
@@ -3881,3 +4161,11 @@ for path in "${BUILD_PATHS[@]}"; do
 done
 
 banner "Hammasi tayyor! Versiya: ${new_pname}+${new_pbuild}"
+  return 0
+}  # ← main_build_flow() oxiri
+
+# ─── Asosiy entry point ─────────────────────────────────
+# Argumentlar tahlil qilingan, special mode handler'lar yuqorida (settings,
+# doctor, promote, rollout) ishlatildi va exit qilindi. Hech qaysi flag
+# bo'lmasa, foydalanuvchini asosiy menyu'ga olib chiqamiz.
+main_menu

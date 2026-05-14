@@ -49,6 +49,7 @@ flutter-build
 - **Per-project promotion strategiyasi** — har loyiha o'z workflow'ini saqlaydi
 - **Action-oriented xato xabarlari** — har xato uchun aniq recovery buyrug'i ("→ Buni sinab ko'ring") clipboard'ga copy-paste qilish uchun tayyor
 - **`flutter-build --doctor`** — tizim diagnostikasi: barcha talab'lar, akkauntlar, ruxsatlar bir qarashda
+- **Asosiy menyu + back navigation** — `flutter-build` (flag'siz) asosiy menyu ochiladi: Build, Sozlamalar, Doctor, Promote, Rollout, Loyihalar. Har bosqichda `q`/`Esc`/`b` bilan orqaga qaytish.
 - **Auto-update** — har ishga tushganda yangilanish tekshiriladi
 - **Cross-platform ochish** — build natijalari macOS (`open`), Linux (`xdg-open`), WSL (`explorer.exe`) da avtomatik ochiladi
 
