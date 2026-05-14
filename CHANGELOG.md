@@ -5,6 +5,50 @@ Loyihaning barcha muhim o'zgarishlari shu faylga yoziladi.
 Format [Keep a Changelog](https://keepachangelog.com/uz/1.1.0/) asosida,
 versiyalash esa [Semantic Versioning](https://semver.org/lang/uz/) qoidasiga rioya qiladi.
 
+## [1.6.0] — 2026-05-14
+
+### Qo'shildi
+
+- **Named Accounts (AWS CLI-style profiles)** — har xil loyihalar har xil
+  akkauntlardan foydalanishi mumkin. Bu professional dizayn: shaxsiy app
+  uchun shaxsiy Service Account, ish loyihasi uchun ish akkaunti, mijoz
+  loyihasi uchun mijoz akkaunti — barchasi yon-yonda saqlanadi va
+  aralashmaydi.
+- **Akkaunt picker** — yangi loyiha aniqlanganda mavjud akkauntlardan
+  birini tanlash menyusi ko'rsatiladi yoki yangisini qo'shish mumkin.
+  Avtomatik birinchi topilgan SA majburiy emas.
+- **Yangi tuzilma**:
+  - Loyiha config'lar (`play/<package>.json`, `appstore/<bundle>.json`)
+    endi `account` nomi orqali havola qiladi (bevosita kalit yo'q).
+  - Akkauntlar alohida saqlanadi:
+    - `~/.config/flutter-build-tool/accounts/play/<name>.json`
+    - `~/.config/flutter-build-tool/accounts/appstore/<name>.json`
+  - Bir akkaunt N ta loyiha tomonidan ishlatilishi mumkin (decoupled).
+- **`sanitize_account_name`** — akkaunt nomi xavfsiz qilish (filesystem-safe).
+- **`play_derive_account_name`** / **`appstore_derive_account_name`** —
+  default nom: Android'da SA JSON ichidagi `project_id`, iOS'da Key ID.
+- **Avtomatik v1.5.0 → v1.6.0 migratsiya** — eski format avtomatik
+  akkauntlarga ajratiladi. Foydalanuvchi xabarsiz davom etadi. Backup
+  fayllar `.v15.<timestamp>` sifatida saqlanadi.
+
+### O'zgartirildi
+
+- **`play_project_config_save(pkg, account, track)`** — eski signature
+  `(pkg, sa_path, track)` o'rniga. SA path endi akkaunt fayli orqali
+  resolve qilinadi (indirection layer).
+- **`appstore_project_config_save(bundle, account)`** — kalit ma'lumotlari
+  akkaunt fayliga ko'chdi.
+- **`upload_to_*` funksiyalari** — endi `current_project → account → key`
+  oqimi orqali resolve qiladi.
+
+### Texnik foyda (single source of truth)
+
+Eski v1.5.0: agar SA JSON fayli ko'chsa, har bir loyihaning config'ini
+yangilash kerak edi (3 loyiha → 3 ta fayl tahriri).
+
+Yangi v1.6.0: faqat **akkaunt** fayli yangilanadi, loyihalar avtomatik
+yangi yo'lni oladi (3 loyiha → 1 ta fayl tahriri).
+
 ## [1.5.0] — 2026-05-14
 
 ### Qo'shildi
@@ -182,6 +226,7 @@ versiyalash esa [Semantic Versioning](https://semver.org/lang/uz/) qoidasiga rio
 - AAB va APK formatlari, Production va Debug rejimlari.
 - Build natijalarini Finder'da avtomatik ochish.
 
+[1.6.0]: https://github.com/Jaloliddin-Fozilov/flutter-build-tool/releases/tag/v1.6.0
 [1.5.0]: https://github.com/Jaloliddin-Fozilov/flutter-build-tool/releases/tag/v1.5.0
 [1.4.1]: https://github.com/Jaloliddin-Fozilov/flutter-build-tool/releases/tag/v1.4.1
 [1.4.0]: https://github.com/Jaloliddin-Fozilov/flutter-build-tool/releases/tag/v1.4.0
