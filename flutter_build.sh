@@ -79,6 +79,503 @@ resolve_version_input() {
   printf '%s\n' "$input"
 }
 
+# ─── Settings (foydalanuvchi default'lari) ──────────────
+# Saqlash: ~/.config/flutter-build-tool/settings.conf — sourceable key=value format
+
+settings_file() { echo "${HOME}/.config/flutter-build-tool/settings.conf"; }
+
+# Factory default qiymatlar (settings.conf yo'q bo'lsa ishlatiladi)
+set_factory_defaults() {
+  DEFAULT_PRODUCTION="${DEFAULT_PRODUCTION:-false}"
+  DEFAULT_ANDROID="${DEFAULT_ANDROID:-false}"
+  DEFAULT_IOS="${DEFAULT_IOS:-false}"
+  DEFAULT_FLUTTER_CLEAN="${DEFAULT_FLUTTER_CLEAN:-false}"
+  DEFAULT_FLUTTER_PUB_GET="${DEFAULT_FLUTTER_PUB_GET:-false}"
+  DEFAULT_AAB="${DEFAULT_AAB:-true}"
+  DEFAULT_APK="${DEFAULT_APK:-false}"
+  DEFAULT_APPSTORE_UPLOAD="${DEFAULT_APPSTORE_UPLOAD:-false}"
+  DEFAULT_PLAYSTORE_UPLOAD="${DEFAULT_PLAYSTORE_UPLOAD:-false}"
+  DEFAULT_ANDROID_TRACK="${DEFAULT_ANDROID_TRACK:-internal}"
+  DEFAULT_IOS_TEAM_ID="${DEFAULT_IOS_TEAM_ID:-}"
+  AUTO_UPDATE_ENABLED="${AUTO_UPDATE_ENABLED:-true}"
+  AUTO_UPDATE_TIMEOUT="${AUTO_UPDATE_TIMEOUT:-5}"
+}
+
+# Settings'ni yuklash — fayl bo'lsa source qiladi, so'ng factory default'larni
+# o'rnatilmagan o'zgaruvchilarga qo'yadi.
+load_settings() {
+  local file
+  file=$(settings_file)
+  # shellcheck disable=SC1090
+  [ -f "$file" ] && source "$file"
+  set_factory_defaults
+}
+
+# Settings'ni faylga yozish (atomic: avval tmp ga, keyin mv)
+save_settings() {
+  local file dir tmp
+  file=$(settings_file)
+  dir=$(dirname "$file")
+  mkdir -p "$dir"
+  chmod 700 "$dir"
+  tmp="${file}.tmp.$$"
+  cat > "$tmp" <<CONF
+# flutter-build-tool sozlamalari
+# Ushbu fayl 'source' bilan o'qiladi. Qo'lda tahrirlash mumkin.
+# Avtomatik yangilash: flutter-build --settings
+
+DEFAULT_PRODUCTION=${DEFAULT_PRODUCTION}
+DEFAULT_ANDROID=${DEFAULT_ANDROID}
+DEFAULT_IOS=${DEFAULT_IOS}
+DEFAULT_FLUTTER_CLEAN=${DEFAULT_FLUTTER_CLEAN}
+DEFAULT_FLUTTER_PUB_GET=${DEFAULT_FLUTTER_PUB_GET}
+DEFAULT_AAB=${DEFAULT_AAB}
+DEFAULT_APK=${DEFAULT_APK}
+DEFAULT_APPSTORE_UPLOAD=${DEFAULT_APPSTORE_UPLOAD}
+DEFAULT_PLAYSTORE_UPLOAD=${DEFAULT_PLAYSTORE_UPLOAD}
+DEFAULT_ANDROID_TRACK=${DEFAULT_ANDROID_TRACK}
+DEFAULT_IOS_TEAM_ID=${DEFAULT_IOS_TEAM_ID}
+AUTO_UPDATE_ENABLED=${AUTO_UPDATE_ENABLED}
+AUTO_UPDATE_TIMEOUT=${AUTO_UPDATE_TIMEOUT}
+CONF
+  chmod 600 "$tmp"
+  mv "$tmp" "$file"
+}
+
+# Joriy settings'ni jadval shaklida ko'rsatish
+show_settings_summary() {
+  echo
+  echo -e "  ${BOLD}╭─ Joriy default'lar ──────────────────────────────${NC}"
+  printf  "  ${BOLD}│${NC}  ${CYAN}%-22s${NC} %s\n" "Production"          "$(_yn "$DEFAULT_PRODUCTION")"
+  printf  "  ${BOLD}│${NC}  ${CYAN}%-22s${NC} %s\n" "Android"             "$(_yn "$DEFAULT_ANDROID")"
+  printf  "  ${BOLD}│${NC}  ${CYAN}%-22s${NC} %s\n" "iOS"                 "$(_yn "$DEFAULT_IOS")"
+  printf  "  ${BOLD}│${NC}  ${CYAN}%-22s${NC} %s\n" "flutter clean"       "$(_yn "$DEFAULT_FLUTTER_CLEAN")"
+  printf  "  ${BOLD}│${NC}  ${CYAN}%-22s${NC} %s\n" "flutter pub get"     "$(_yn "$DEFAULT_FLUTTER_PUB_GET")"
+  printf  "  ${BOLD}│${NC}  ${CYAN}%-22s${NC} %s\n" "AAB format"          "$(_yn "$DEFAULT_AAB")"
+  printf  "  ${BOLD}│${NC}  ${CYAN}%-22s${NC} %s\n" "APK format"          "$(_yn "$DEFAULT_APK")"
+  printf  "  ${BOLD}│${NC}  ${CYAN}%-22s${NC} %s\n" "App Store upload"    "$(_yn "$DEFAULT_APPSTORE_UPLOAD")"
+  printf  "  ${BOLD}│${NC}  ${CYAN}%-22s${NC} %s\n" "Play Store upload"   "$(_yn "$DEFAULT_PLAYSTORE_UPLOAD")"
+  printf  "  ${BOLD}│${NC}  ${CYAN}%-22s${NC} ${YELLOW}%s${NC}\n" "Android track"       "$DEFAULT_ANDROID_TRACK"
+  printf  "  ${BOLD}│${NC}  ${CYAN}%-22s${NC} ${YELLOW}%s${NC}\n" "iOS Team ID"         "${DEFAULT_IOS_TEAM_ID:-<sozlanmagan>}"
+  printf  "  ${BOLD}│${NC}  ${CYAN}%-22s${NC} %s\n" "Auto-update"         "$(_yn "$AUTO_UPDATE_ENABLED")"
+  printf  "  ${BOLD}│${NC}  ${CYAN}%-22s${NC} ${YELLOW}%ss${NC}\n" "Auto-update timeout" "$AUTO_UPDATE_TIMEOUT"
+  echo -e "  ${BOLD}╰─────────────────────────────────────────────────${NC}"
+}
+
+# Boolean qiymat uchun ✓/✗
+_yn() {
+  if [ "$1" = "true" ]; then printf "${GREEN}✓ yoqilgan${NC}"; else printf "${RED}✗ o'chirilgan${NC}"; fi
+}
+
+# ─── Settings menyulari ─────────────────────────────────
+
+settings_main_menu() {
+  while true; do
+    banner "Flutter Build Tool — Sozlamalar"
+
+    echo -e "  ${BOLD}╭─ Bo'limlar ─────────────────────────────────────────╮${NC}"
+    echo -e "  ${BOLD}│${NC}  ${CYAN}1${NC}) Build defaults    — checkbox oldindan tanlovlar     ${BOLD}│${NC}"
+    echo -e "  ${BOLD}│${NC}  ${CYAN}2${NC}) Akkauntlar        — Play va App Store boshqaruvi   ${BOLD}│${NC}"
+    echo -e "  ${BOLD}│${NC}  ${CYAN}3${NC}) Loyihalar         — sozlangan ro'yxat, tahrirlash  ${BOLD}│${NC}"
+    echo -e "  ${BOLD}│${NC}  ${CYAN}4${NC}) Auto-update       — yoqish/o'chirish, timeout      ${BOLD}│${NC}"
+    echo -e "  ${BOLD}│${NC}  ${CYAN}5${NC}) iOS Team ID       — ExportOptions.plist uchun      ${BOLD}│${NC}"
+    echo -e "  ${BOLD}│${NC}  ${CYAN}6${NC}) Joriy sozlamalar  — ro'yxatda ko'rish               ${BOLD}│${NC}"
+    echo -e "  ${BOLD}│${NC}  ${CYAN}7${NC}) Factory reset     — barchasini boshlang'ich holatga ${BOLD}│${NC}"
+    echo -e "  ${BOLD}├─────────────────────────────────────────────────────${NC}"
+    echo -e "  ${BOLD}│${NC}  ${CYAN}q${NC}) Chiqish                                              ${BOLD}│${NC}"
+    echo -e "  ${BOLD}╰─────────────────────────────────────────────────────${NC}"
+    echo
+    read -p "  Tanlang [1-7, q]: " choice
+
+    case "$choice" in
+      1) settings_build_defaults ;;
+      2) settings_accounts_menu ;;
+      3) settings_projects_menu ;;
+      4) settings_auto_update ;;
+      5) settings_ios_team_id ;;
+      6) show_settings_summary; read -p "  Davom etish uchun Enter..." _ ;;
+      7) settings_factory_reset ;;
+      q|Q|"") return 0 ;;
+      *) warn "Noto'g'ri tanlov" ;;
+    esac
+  done
+}
+
+# Build defaults — checkbox menyusi orqali
+settings_build_defaults() {
+  banner "Build defaults — har deploy'da oldindan tanlanadi"
+
+  info "Bu sozlamalar build menyu birinchi marta ko'rsatilganda"
+  info "default checkbox holatlarini belgilaydi. Foydalanuvchi"
+  info "har deploy'da o'zgartira oladi."
+  echo
+
+  CHECKBOX_INITIAL=(
+    "$DEFAULT_PRODUCTION"
+    "$DEFAULT_ANDROID"
+    "$DEFAULT_IOS"
+    "$DEFAULT_FLUTTER_CLEAN"
+    "$DEFAULT_FLUTTER_PUB_GET"
+    "$DEFAULT_AAB"
+    "$DEFAULT_APK"
+    "$DEFAULT_APPSTORE_UPLOAD"
+    "$DEFAULT_PLAYSTORE_UPLOAD"
+  )
+  arrow_checkbox "Default tanlovlarni belgilang (Space toggle, Enter saqlash)" \
+    "Production" \
+    "Android" \
+    "iOS" \
+    "flutter clean" \
+    "flutter pub get" \
+    "AAB format (Android)" \
+    "APK format (Android)" \
+    "App Store Connect upload" \
+    "Play Store upload"
+
+  DEFAULT_PRODUCTION="${CHECKBOX_RESULT[0]}"
+  DEFAULT_ANDROID="${CHECKBOX_RESULT[1]}"
+  DEFAULT_IOS="${CHECKBOX_RESULT[2]}"
+  DEFAULT_FLUTTER_CLEAN="${CHECKBOX_RESULT[3]}"
+  DEFAULT_FLUTTER_PUB_GET="${CHECKBOX_RESULT[4]}"
+  DEFAULT_AAB="${CHECKBOX_RESULT[5]}"
+  DEFAULT_APK="${CHECKBOX_RESULT[6]}"
+  DEFAULT_APPSTORE_UPLOAD="${CHECKBOX_RESULT[7]}"
+  DEFAULT_PLAYSTORE_UPLOAD="${CHECKBOX_RESULT[8]}"
+
+  # Android track ham
+  echo
+  info "Android Play Store default track (internal/alpha/beta/production)"
+  info "Hozirgi: ${BOLD}${DEFAULT_ANDROID_TRACK}${NC}"
+  read -p "    Yangi track [${DEFAULT_ANDROID_TRACK}]: " track
+  if [ -n "$track" ]; then
+    case "$track" in
+      internal|alpha|beta|production)
+        DEFAULT_ANDROID_TRACK="$track"
+        ;;
+      *)
+        warn "Noto'g'ri track — o'zgartirilmadi (${DEFAULT_ANDROID_TRACK} qoladi)"
+        ;;
+    esac
+  fi
+
+  save_settings
+  ok "Build defaults saqlandi"
+  echo
+  read -p "  Davom etish uchun Enter..." _
+}
+
+# Akkauntlar boshqaruv menyusi
+settings_accounts_menu() {
+  while true; do
+    banner "Akkauntlar boshqaruvi"
+
+    echo -e "  ${BOLD}╭─ Mavjud akkauntlar ────────────────────────────────${NC}"
+    echo -e "  ${BOLD}│${NC}  ${BOLD}Play Store:${NC}"
+    local count=0
+    local name email
+    while IFS= read -r name; do
+      [ -z "$name" ] && continue
+      email=$(play_account_get "$name" "client_email")
+      printf "  ${BOLD}│${NC}     • ${CYAN}%-20s${NC} %s\n" "$name" "$email"
+      count=$((count + 1))
+    done < <(play_list_accounts)
+    [ "$count" -eq 0 ] && echo -e "  ${BOLD}│${NC}     ${YELLOW}(yo'q)${NC}"
+
+    echo -e "  ${BOLD}│${NC}"
+    echo -e "  ${BOLD}│${NC}  ${BOLD}App Store:${NC}"
+    count=0
+    local kid iid
+    while IFS= read -r name; do
+      [ -z "$name" ] && continue
+      kid=$(appstore_account_get "$name" "key_id")
+      iid=$(appstore_account_get "$name" "issuer_id")
+      printf "  ${BOLD}│${NC}     • ${CYAN}%-20s${NC} Key %s / %s…\n" "$name" "$kid" "${iid:0:8}"
+      count=$((count + 1))
+    done < <(appstore_list_accounts)
+    [ "$count" -eq 0 ] && echo -e "  ${BOLD}│${NC}     ${YELLOW}(yo'q)${NC}"
+    echo -e "  ${BOLD}╰────────────────────────────────────────────────────${NC}"
+
+    echo
+    echo -e "  ${BOLD}Amallar:${NC}"
+    echo -e "    ${CYAN}1${NC}) Yangi Play Store akkaunti qo'shish"
+    echo -e "    ${CYAN}2${NC}) Yangi App Store akkaunti qo'shish"
+    echo -e "    ${CYAN}3${NC}) Play Store akkauntini o'chirish"
+    echo -e "    ${CYAN}4${NC}) App Store akkauntini o'chirish"
+    echo -e "    ${CYAN}b${NC}) Orqaga"
+    echo
+    read -p "  Tanlang [1-4, b]: " choice
+
+    case "$choice" in
+      1) play_add_new_account "" ;;
+      2) appstore_add_new_account "" ;;
+      3) settings_delete_play_account ;;
+      4) settings_delete_appstore_account ;;
+      b|B|"") return 0 ;;
+      *) warn "Noto'g'ri tanlov" ;;
+    esac
+  done
+}
+
+settings_delete_play_account() {
+  local accounts=()
+  local name
+  while IFS= read -r name; do
+    [ -n "$name" ] && accounts+=("$name")
+  done < <(play_list_accounts)
+
+  if [ ${#accounts[@]} -eq 0 ]; then
+    warn "Play Store akkauntlari yo'q"
+    return 0
+  fi
+
+  echo
+  info "O'chirishni xohlagan akkauntni tanlang:"
+  local i=1
+  for name in "${accounts[@]}"; do
+    printf "    ${CYAN}%d${NC}) %s\n" "$i" "$name"
+    i=$((i + 1))
+  done
+  printf "    ${CYAN}%d${NC}) Bekor qilish\n" "$i"
+  echo
+  read -p "  Tanlang [1-${i}]: " choice
+
+  if [[ "$choice" =~ ^[0-9]+$ ]] && [ "$choice" -ge 1 ] && [ "$choice" -le "${#accounts[@]}" ]; then
+    local target="${accounts[$((choice - 1))]}"
+    warn "Akkaunt '${target}' o'chiriladi (loyihalar config'i ham buziladi!)"
+    read -p "  Aniqmi? (y/n) [n]: " confirm
+    if [[ "$confirm" =~ ^[Yy]$ ]]; then
+      rm -f "$(play_account_file "$target")"
+      ok "Akkaunt o'chirildi: ${target}"
+      info "Eslatma: shu akkauntga ulangan loyihalar config'i endi ishlamaydi"
+    fi
+  fi
+}
+
+settings_delete_appstore_account() {
+  local accounts=()
+  local name
+  while IFS= read -r name; do
+    [ -n "$name" ] && accounts+=("$name")
+  done < <(appstore_list_accounts)
+
+  if [ ${#accounts[@]} -eq 0 ]; then
+    warn "App Store akkauntlari yo'q"
+    return 0
+  fi
+
+  echo
+  info "O'chirishni xohlagan akkauntni tanlang:"
+  local i=1
+  for name in "${accounts[@]}"; do
+    printf "    ${CYAN}%d${NC}) %s\n" "$i" "$name"
+    i=$((i + 1))
+  done
+  printf "    ${CYAN}%d${NC}) Bekor qilish\n" "$i"
+  echo
+  read -p "  Tanlang [1-${i}]: " choice
+
+  if [[ "$choice" =~ ^[0-9]+$ ]] && [ "$choice" -ge 1 ] && [ "$choice" -le "${#accounts[@]}" ]; then
+    local target="${accounts[$((choice - 1))]}"
+    warn "Akkaunt '${target}' o'chiriladi (loyihalar config'i ham buziladi!)"
+    read -p "  Aniqmi? (y/n) [n]: " confirm
+    if [[ "$confirm" =~ ^[Yy]$ ]]; then
+      rm -f "$(appstore_account_file "$target")"
+      ok "Akkaunt o'chirildi: ${target}"
+    fi
+  fi
+}
+
+# Loyihalar boshqaruv menyusi
+settings_projects_menu() {
+  banner "Sozlangan loyihalar"
+
+  echo -e "  ${BOLD}Android (Play Store):${NC}"
+  local count=0 line
+  while IFS= read -r line; do
+    [ -z "$line" ] && continue
+    echo "$line"
+    count=$((count + 1))
+  done < <(play_list_projects)
+  [ "$count" -eq 0 ] && echo -e "    ${YELLOW}(yo'q)${NC}"
+
+  echo
+  echo -e "  ${BOLD}iOS (App Store):${NC}"
+  count=0
+  local dir
+  dir=$(appstore_projects_dir)
+  if [ -d "$dir" ]; then
+    local f bundle account
+    for f in "$dir"/*.json; do
+      [ -f "$f" ] || continue
+      grep -q '"v15.bak"' "$f" 2>/dev/null && continue
+      bundle=$(basename "$f" .json)
+      account=$(grep '"account"' "$f" | sed -E 's/.*"account"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/' | head -1)
+      [ -n "$account" ] && echo "  • ${bundle} → ${account}" && count=$((count + 1))
+    done
+  fi
+  [ "$count" -eq 0 ] && echo -e "    ${YELLOW}(yo'q)${NC}"
+
+  echo
+  echo -e "  ${BOLD}Amallar:${NC}"
+  echo -e "    ${CYAN}d${NC}) Loyiha config'ini o'chirish (qayta sozlash uchun)"
+  echo -e "    ${CYAN}b${NC}) Orqaga"
+  echo
+  read -p "  Tanlang [d, b]: " choice
+
+  case "$choice" in
+    d|D) settings_delete_project ;;
+    *)   return 0 ;;
+  esac
+}
+
+settings_delete_project() {
+  echo
+  info "Qaysi platforma loyihasini o'chirasiz?"
+  echo -e "    ${CYAN}1${NC}) Android (Play Store)"
+  echo -e "    ${CYAN}2${NC}) iOS (App Store)"
+  read -p "  Tanlang [1-2]: " plat
+
+  local dir
+  case "$plat" in
+    1) dir=$(play_projects_dir) ;;
+    2) dir=$(appstore_projects_dir) ;;
+    *) return 0 ;;
+  esac
+
+  [ ! -d "$dir" ] && { warn "Hech qanday loyiha topilmadi"; return 0; }
+
+  local items=()
+  local f
+  for f in "$dir"/*.json; do
+    [ -f "$f" ] || continue
+    items+=("$(basename "$f" .json)")
+  done
+
+  if [ ${#items[@]} -eq 0 ]; then
+    warn "Loyihalar yo'q"
+    return 0
+  fi
+
+  echo
+  local i=1
+  for f in "${items[@]}"; do
+    printf "    ${CYAN}%d${NC}) %s\n" "$i" "$f"
+    i=$((i + 1))
+  done
+  printf "    ${CYAN}%d${NC}) Bekor qilish\n" "$i"
+  echo
+  read -p "  Tanlang [1-${i}]: " choice
+
+  if [[ "$choice" =~ ^[0-9]+$ ]] && [ "$choice" -ge 1 ] && [ "$choice" -le "${#items[@]}" ]; then
+    local target="${items[$((choice - 1))]}"
+    read -p "  Loyiha '${target}' config'ini o'chiramizmi? (y/n) [n]: " confirm
+    if [[ "$confirm" =~ ^[Yy]$ ]]; then
+      rm -f "$dir/${target}.json"
+      ok "Loyiha config o'chirildi: $target"
+      info "Keyingi build'da qayta sozlash so'raladi"
+    fi
+  fi
+}
+
+# Auto-update sozlamalari
+settings_auto_update() {
+  banner "Auto-update sozlamalari"
+
+  echo
+  echo -e "  ${BOLD}Joriy holat:${NC}"
+  echo -e "    Yoqilgan:    $(_yn "$AUTO_UPDATE_ENABLED")"
+  echo -e "    Timeout:     ${YELLOW}${AUTO_UPDATE_TIMEOUT}s${NC}"
+  echo
+
+  echo -e "  ${BOLD}Amallar:${NC}"
+  echo -e "    ${CYAN}1${NC}) Yoqish/o'chirish"
+  echo -e "    ${CYAN}2${NC}) Timeout o'zgartirish"
+  echo -e "    ${CYAN}b${NC}) Orqaga"
+  echo
+  read -p "  Tanlang [1-2, b]: " choice
+
+  case "$choice" in
+    1)
+      if [ "$AUTO_UPDATE_ENABLED" = "true" ]; then
+        AUTO_UPDATE_ENABLED=false
+        ok "Auto-update o'chirildi"
+      else
+        AUTO_UPDATE_ENABLED=true
+        ok "Auto-update yoqildi"
+      fi
+      save_settings
+      ;;
+    2)
+      read -p "  Yangi timeout (sekundlarda, hozir: ${AUTO_UPDATE_TIMEOUT}): " newt
+      if [[ "$newt" =~ ^[0-9]+$ ]] && [ "$newt" -ge 1 ] && [ "$newt" -le 60 ]; then
+        AUTO_UPDATE_TIMEOUT="$newt"
+        save_settings
+        ok "Timeout: ${newt}s"
+      else
+        warn "Noto'g'ri qiymat (1-60 oralig'ida bo'lishi kerak)"
+      fi
+      ;;
+  esac
+
+  echo
+  read -p "  Davom etish uchun Enter..." _
+}
+
+# iOS Team ID sozlamasi
+settings_ios_team_id() {
+  banner "iOS Team ID — ExportOptions.plist uchun"
+
+  echo
+  info "Bu Team ID ios/ExportOptions.plist avtomatik yaratilganda"
+  info "ishlatiladi. Apple Developer hisobingizdan oling:"
+  info "https://developer.apple.com/account → Membership → Team ID"
+  echo
+  echo -e "  Hozirgi: ${YELLOW}${DEFAULT_IOS_TEAM_ID:-<sozlanmagan>}${NC}"
+  echo
+
+  read -p "  Yangi Team ID (10 belgi, Enter — saqlamaslik): " newt
+  if [ -z "$newt" ]; then
+    warn "O'zgartirilmadi"
+  elif [[ "$newt" =~ ^[A-Z0-9]{10}$ ]]; then
+    DEFAULT_IOS_TEAM_ID="$newt"
+    save_settings
+    ok "Team ID saqlandi: $newt"
+  else
+    warn "Team ID 10 ta katta harf/raqamdan iborat bo'lishi kerak"
+  fi
+
+  echo
+  read -p "  Davom etish uchun Enter..." _
+}
+
+# Factory reset
+settings_factory_reset() {
+  banner "Factory reset"
+  warn "Bu sozlamalar va akkauntlar JADVALINI BUZADI:"
+  warn "  • Build defaults (Production, Android, iOS, va h.k.)"
+  warn "  • Auto-update sozlamalari"
+  warn "  • Team ID"
+  warn "Akkauntlar va loyiha config'lari SAQLANADI."
+  echo
+  read -p "  Aniqmi? (yes/n): " confirm
+  if [ "$confirm" = "yes" ]; then
+    rm -f "$(settings_file)"
+    # Factory default qiymatlarni qayta o'rnatish
+    unset DEFAULT_PRODUCTION DEFAULT_ANDROID DEFAULT_IOS DEFAULT_FLUTTER_CLEAN
+    unset DEFAULT_FLUTTER_PUB_GET DEFAULT_AAB DEFAULT_APK
+    unset DEFAULT_APPSTORE_UPLOAD DEFAULT_PLAYSTORE_UPLOAD
+    unset DEFAULT_ANDROID_TRACK DEFAULT_IOS_TEAM_ID
+    unset AUTO_UPDATE_ENABLED AUTO_UPDATE_TIMEOUT
+    set_factory_defaults
+    save_settings
+    ok "Factory default'lar tiklandi"
+  else
+    info "Bekor qilindi"
+  fi
+  echo
+  read -p "  Davom etish uchun Enter..." _
+}
+
 # open_url <url>
 #   Brauzerda URL ochish — open_file bilan bir xil platform fallback
 open_url() {
@@ -179,10 +676,13 @@ open_file() {
 
 # ─── Auto-update tekshiruvi ───────────────────────────────
 check_for_update() {
+  # Settings'da yoqilganmi?
+  [ "${AUTO_UPDATE_ENABLED:-true}" = "true" ] || return 0
   command -v curl > /dev/null 2>&1 || return 0
 
-  local latest
-  latest=$(curl -fsSL --max-time 5 "$SCRIPT_RAW_URL" 2>/dev/null \
+  local latest timeout
+  timeout="${AUTO_UPDATE_TIMEOUT:-5}"
+  latest=$(curl -fsSL --max-time "$timeout" "$SCRIPT_RAW_URL" 2>/dev/null \
     | grep '^SCRIPT_VERSION=' | head -1 \
     | sed -E 's/SCRIPT_VERSION="?([^"]+)"?/\1/')
 
@@ -277,10 +777,14 @@ perform_self_update() {
 
 # ─── Argumentlarni tahlil qilish ──────────────────────────
 SKIP_UPDATE=false
+SETTINGS_MODE=false
 for arg in "$@"; do
   case "$arg" in
     --no-update-check|--skip-update)
       SKIP_UPDATE=true
+      ;;
+    --settings|-s)
+      SETTINGS_MODE=true
       ;;
     --version|-v)
       echo "${SCRIPT_VERSION}"
@@ -292,6 +796,7 @@ Flutter Build Tool v${SCRIPT_VERSION}
 
 Foydalanish:
   ./flutter_build.sh                    Interaktiv build
+  ./flutter_build.sh --settings, -s     Sozlamalar menyusi (default'larni oldindan)
   ./flutter_build.sh --version          Versiyani ko'rsatish
   ./flutter_build.sh --no-update-check  Yangilanish tekshiruvisiz ishga tushirish
   ./flutter_build.sh --help             Bu ma'lumot
@@ -303,8 +808,17 @@ EOF
   esac
 done
 
+# Settings'ni yuklash (har doim — build flow va settings menyu ham ishlatadi)
+load_settings
+
 # Yangilanish tekshiruvi (validatsiyadan oldin)
 $SKIP_UPDATE || check_for_update
+
+# Settings menyu rejimi — build'ga o'tmaymiz
+if $SETTINGS_MODE; then
+  settings_main_menu
+  exit 0
+fi
 
 # ─── Arrow-key checkbox menyusi ───────────────────────────
 # Foydalanish: arrow_checkbox "Sarlavha" "Item 1" "Item 2" ...
@@ -322,7 +836,17 @@ arrow_checkbox() {
   local n=${#options[@]}
   local checked=()
   local i
-  for ((i = 0; i < n; i++)); do checked+=("false"); done
+  # CHECKBOX_INITIAL global array — agar belgilangan bo'lsa, undagi qiymatlarni
+  # ishlatamiz (true/false). Yo'q joylar uchun "false".
+  for ((i = 0; i < n; i++)); do
+    if [ "$i" -lt "${#CHECKBOX_INITIAL[@]}" ]; then
+      checked+=("${CHECKBOX_INITIAL[$i]:-false}")
+    else
+      checked+=("false")
+    fi
+  done
+  # Keyingi chaqiruv uchun reset (default = bo'sh)
+  CHECKBOX_INITIAL=()
   local cursor=0
 
   # Terminal kengligi va opsiya max uzunligi
@@ -1249,7 +1773,14 @@ ensure_export_options() {
   [[ ! "$create" =~ ^[Yy]$ ]] && { warn "Bekor qilindi"; return 1; }
 
   local team_id
-  read -p "    Apple Team ID (10 belgi, Apple Developer hisobingizdan): " team_id
+  # Settings'dan saqlangan default Team ID, agar bor bo'lsa
+  local default_team="${DEFAULT_IOS_TEAM_ID:-}"
+  if [ -n "$default_team" ]; then
+    read -p "    Apple Team ID (10 belgi) [${default_team}]: " team_id
+    team_id="${team_id:-$default_team}"
+  else
+    read -p "    Apple Team ID (10 belgi, Apple Developer hisobingizdan): " team_id
+  fi
   if [ -z "$team_id" ]; then
     err "Team ID bo'sh bo'lishi mumkin emas"
     return 1
@@ -2234,6 +2765,17 @@ printf  "  ${BOLD}│${NC}  ${CYAN}%-22s${NC} ${YELLOW}%s${NC}\n" "Android versi
 echo -e "  ${BOLD}╰──────────────────────────────────────────────────╯${NC}"
 
 # ─── 2. Tanlovlar (yagona checkbox menyu) ─────────────────
+# Settings'dan default'larni oldindan tanlangan holatga qo'yamiz.
+# Foydalanuvchi xohlasa o'zgartira oladi.
+CHECKBOX_INITIAL=(
+  "$DEFAULT_PRODUCTION"
+  "$DEFAULT_ANDROID"
+  "$DEFAULT_IOS"
+  "$DEFAULT_FLUTTER_CLEAN"
+  "$DEFAULT_FLUTTER_PUB_GET"
+  "$DEFAULT_APPSTORE_UPLOAD"
+  "$DEFAULT_PLAYSTORE_UPLOAD"
+)
 arrow_checkbox "Tanlovlar (Debug = Production yoqilmasa)" \
   "Production" \
   "Android" \
@@ -2289,6 +2831,7 @@ fi
 BUILD_AAB=false
 BUILD_APK=false
 if $BUILD_ANDROID; then
+  CHECKBOX_INITIAL=("$DEFAULT_AAB" "$DEFAULT_APK")
   arrow_checkbox "Android format (AAB = Play Store, APK = sideload)" \
     "AAB" \
     "APK"

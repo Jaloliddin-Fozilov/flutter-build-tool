@@ -42,6 +42,7 @@ flutter-build
 - **Avtomatik sozlash wizard'lari** — brauzer ochiladi, key fayllari Downloads'dan avtomatik aniqlanadi, sozlash bir necha clickda tugaydi (Key ID, Issuer ID, JSON yo'l — barchasi auto-detect)
 - **Per-project konfiguratsiya** — har loyiha o'z `package_name`/`bundle_id` bo'yicha alohida sozlanadi. Bir marta sozlasangiz, **qayta so'ralmaydi**. Bir Service Account ko'p loyihaga ishlatilishi mumkin (cross-project reuse).
 - **Named Accounts (AWS CLI-style)** — har xil loyihalar har xil akkauntlardan foydalanishi mumkin: shaxsiy, ish, mijoz. Yangi loyiha aniqlanganda **akkaunt picker** ko'rsatiladi.
+- **Settings menyu** (`flutter-build --settings`) — barcha default'larni oldindan sozlash: build menu checkbox'lari, default track, Team ID, auto-update sozlamalari. Build vaqtida hech narsa ortiqcha so'ralmaydi.
 - **Auto-update** — har ishga tushganda yangilanish tekshiriladi
 - **Cross-platform ochish** — build natijalari macOS (`open`), Linux (`xdg-open`), WSL (`explorer.exe`) da avtomatik ochiladi
 
@@ -73,6 +74,7 @@ flutter-build
 |--------|---------|
 | `--version`, `-v` | Versiyani ko'rsatish |
 | `--help`, `-h` | Yordam |
+| `--settings`, `-s` | Sozlamalar menyusi (default'larni oldindan sozlash) |
 | `--no-update-check` | Yangilanish tekshiruvisiz ishga tushirish (CI uchun) |
 
 ## Talablar
