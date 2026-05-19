@@ -5,6 +5,104 @@ Loyihaning barcha muhim o'zgarishlari shu faylga yoziladi.
 Format [Keep a Changelog](https://keepachangelog.com/uz/1.1.0/) asosida,
 versiyalash esa [Semantic Versioning](https://semver.org/lang/uz/) qoidasiga rioya qiladi.
 
+## [1.12.0] — 2026-05-14
+
+### Qo'shildi — iOS uchun 3 ta auth method
+
+Avval faqat **API Key (.p8)** ishlatilardi — bu **Owner/Admin role**
+talab qiladi. Developer rolida bo'lganlar `.p8` yarata olmasdi. Endi
+3 ta authentication usul mavjud:
+
+#### 1. **API Key (.p8)** — hozirgi
+- Owner/Admin role kerak
+- App Store Connect → Users and Access → Integrations → API Keys
+- Eng kuchli (team-wide access)
+
+#### 2. **Apple ID + App-specific password** — Developer ham qila oladi ✅
+- Sizning shaxsiy Apple ID'ingiz orqali
+- App-specific password: appleid.apple.com → Security
+- **Owner ruxsati shart emas** — har qaysi team a'zo qila oladi
+- Tool: `xcrun altool --username/--password`
+
+#### 3. **Apple ID + Transporter CLI** — backup
+- Apple ID + app-specific password bilan
+- Tool: `/Applications/Transporter.app/Contents/itms/bin/iTMSTransporter`
+- Mac App Store'dan Transporter.app o'rnatish kerak (bepul)
+
+### Account schema (yangi `auth_type` field)
+
+```json
+// API Key (Owner)
+{"name":"...", "auth_type":"api_key", "key_id":"...", "issuer_id":"...", "key_path":"..."}
+
+// Apple ID + altool (Developer)
+{"name":"...", "auth_type":"apple_id_altool", "apple_id":"you@example.com", "app_specific_password":"xxxx-xxxx-xxxx-xxxx"}
+
+// Apple ID + Transporter
+{"name":"...", "auth_type":"apple_id_transporter", "apple_id":"...", "app_specific_password":"..."}
+```
+
+Eski v1.11.x akkauntlar (auth_type field'siz) avtomatik `api_key` deb
+qabul qilinadi — backwards-compatible.
+
+### Yangi funksiyalar
+
+- `appstore_account_save_apple_id` — Apple ID + password formati
+- `appstore_account_get_auth_type` — backwards-compat helper
+- `appstore_add_api_key_account` — .p8 wizard (ajratilgan)
+- `appstore_add_apple_id_account` — Apple ID wizard (altool yoki transporter)
+- `appstore_upload_via_api_key` — dispatcher method 1
+- `appstore_upload_via_apple_id_altool` — dispatcher method 2
+- `appstore_upload_via_apple_id_transporter` — dispatcher method 3
+- `appstore_upload_recovery_hints` — auth_type'ga ko'ra recovery
+
+### O'zgartirildi
+
+- `appstore_add_new_account` endi **router** — usulni tanlash menu
+- `upload_to_appstore` endi `auth_type` ga ko'ra **dispatcher**
+- `appstore_pick_account_for_project` har akkaunt uchun auth method
+  ko'rsatadi (API Key XX vs Apple ID: you@... (altool))
+- `ensure_appstore_credentials` har auth_type uchun alohida tekshirish
+- `--doctor` Transporter mavjudligini ham tekshiradi va mavjud
+  upload usullarini ro'yxat qiladi
+
+### Xavfsizlik
+
+- App-specific password `chmod 600` bilan saqlanadi
+- Read on terminal — `read -s` (shadow input, ekran ko'rsatmaydi)
+- Apple uchun normal pattern: app-specific password'lar dasturlar
+  tomonidan saqlanishi uchun mo'ljallangan
+- Compromise bo'lganda foydalanuvchi appleid.apple.com'da bir click bilan
+  revoke qila oladi (asosiy Apple ID parolingiz xavfsiz qoladi)
+
+### Foydalanuvchi nuqtai nazaridan
+
+Avval (Developer role'da):
+```
+"Owner uchun .p8 olishim kerak — lekin Owner javob bermayapti :("
+```
+
+Endi (Developer role'da):
+```
+$ flutter-build --settings → 2) Akkauntlar → 1) Yangi Play Store akkaunti... 
+   yo'q, App Store. → 2) Yangi App Store akkaunti
+→ Authentication usulini tanlang: 2 (Apple ID + App-specific password)
+→ appleid.apple.com'da password generate qildim
+→ Email + password kiritdim → ✓ Tayyor
+```
+
+Endi `flutter-build` ishga tushirsangiz, sizning Apple ID orqali
+TestFlight'ga upload qilinadi.
+
+### Test natijalari
+
+- `bash -n` syntax: ✅
+- Apple ID altool account save/load: ✅
+- Apple ID transporter account save/load: ✅
+- API Key (eski format) backwards compat: ✅
+- File permissions chmod 600: ✅
+- Jami: 8/8 unit test
+
 ## [1.11.0] — 2026-05-14
 
 ### O'zgartirildi — Build menyu wizard-style
@@ -540,6 +638,7 @@ yangi yo'lni oladi (3 loyiha → 1 ta fayl tahriri).
 - AAB va APK formatlari, Production va Debug rejimlari.
 - Build natijalarini Finder'da avtomatik ochish.
 
+[1.12.0]: https://github.com/Jaloliddin-Fozilov/flutter-build-tool/releases/tag/v1.12.0
 [1.11.0]: https://github.com/Jaloliddin-Fozilov/flutter-build-tool/releases/tag/v1.11.0
 [1.10.1]: https://github.com/Jaloliddin-Fozilov/flutter-build-tool/releases/tag/v1.10.1
 [1.10.0]: https://github.com/Jaloliddin-Fozilov/flutter-build-tool/releases/tag/v1.10.0

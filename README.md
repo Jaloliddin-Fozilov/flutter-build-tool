@@ -37,7 +37,7 @@ flutter-build
 - **Format tanlash** — AAB (Play Store), APK (sideload), yoki ikkalasi
 - **Debug yoki Production** rejimlar
 - **Android signing** — keystore yaratish, mavjud keystoreni ulash, `key.properties` va `build.gradle` avtomatik sozlash (eski keystore xavfsiz backup qilinadi)
-- **iOS App Store upload** — `xcrun altool` orqali avtomatik TestFlight/App Store deploy (Transporter app'iga muqobil)
+- **iOS App Store upload (3 ta auth method)** — Owner/Admin uchun `.p8` API Key, **Developer rolida** Apple ID + app-specific password, yoki Transporter.app CLI orqali. Har bir team a'zo o'z hisobi bilan deploy qila oladi.
 - **Android Play Store upload** — Google Play Developer API ga to'g'ridan-to'g'ri (Ruby, Python, Node — hech narsa kerak emas; pure bash + openssl)
 - **Avtomatik sozlash wizard'lari** — brauzer ochiladi, key fayllari Downloads'dan avtomatik aniqlanadi, sozlash bir necha clickda tugaydi (Key ID, Issuer ID, JSON yo'l — barchasi auto-detect)
 - **Per-project konfiguratsiya** — har loyiha o'z `package_name`/`bundle_id` bo'yicha alohida sozlanadi. Bir marta sozlasangiz, **qayta so'ralmaydi**. Bir Service Account ko'p loyihaga ishlatilishi mumkin (cross-project reuse).

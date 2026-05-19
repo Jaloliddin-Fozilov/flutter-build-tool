@@ -22,7 +22,7 @@
 set -eo pipefail
 
 # ─── Skript ma'lumotlari ──────────────────────────────────
-SCRIPT_VERSION="1.11.0"
+SCRIPT_VERSION="1.12.0"
 SCRIPT_REPO="Jaloliddin-Fozilov/flutter-build-tool"
 SCRIPT_RAW_URL="https://raw.githubusercontent.com/${SCRIPT_REPO}/main/flutter_build.sh"
 
@@ -262,6 +262,28 @@ run_diagnostics() {
       err "xcrun                   topilmadi"
       info "       iOS App Store upload ishlamaydi"
       fails=$((fails + 1))
+    fi
+
+    # Transporter.app mavjudligi (3-method uchun)
+    local itms="/Applications/Transporter.app/Contents/itms/bin/iTMSTransporter"
+    if [ -x "$itms" ]; then
+      ok "Transporter.app         (iTMSTransporter CLI mavjud)"
+    else
+      info "Transporter.app yo'q   (ixtiyoriy — Apple ID upload uchun backup)"
+      info "       Mac App Store'da bepul"
+    fi
+
+    # Mavjud iOS auth methods xulosasi
+    echo
+    echo -e "  ${BOLD}iOS upload uchun mumkin bo'lgan usullar:${NC}"
+    ok "1) API Key (.p8)        — Owner/Admin role kerak"
+    if command -v xcrun > /dev/null 2>&1; then
+      ok "2) Apple ID + altool    — Developer ham qila oladi ${GREEN}(siz uchun)${NC}"
+    fi
+    if [ -x "$itms" ]; then
+      ok "3) Apple ID + Transporter — alternativ backup"
+    else
+      info "3) Apple ID + Transporter — Transporter.app o'rnatilmagan"
     fi
   else
     info "  (macOS emas — iOS deploy talab'lari skip)"
@@ -2186,6 +2208,8 @@ appstore_account_get() {
     | sed -E "s/.*\"${key}\"[[:space:]]*:[[:space:]]*\"([^\"]*)\".*/\1/"
 }
 
+# v1.12.0: API Key (.p8) — Owner/Admin uchun
+# Eski API saqlanadi (backwards-compat) lekin endi auth_type field bilan
 appstore_account_save() {
   local name="$1" key_id="$2" issuer_id="$3" key_path="$4"
   local file dir
@@ -2196,12 +2220,43 @@ appstore_account_save() {
   cat > "$file" <<JSON
 {
   "name": "${name}",
+  "auth_type": "api_key",
   "key_id": "${key_id}",
   "issuer_id": "${issuer_id}",
   "key_path": "${key_path}"
 }
 JSON
   chmod 600 "$file"
+}
+
+# v1.12.0: Apple ID + App-specific password — Developer ham qila oladi
+# Argument 'via' = "altool" (xcrun) yoki "transporter" (iTMSTransporter)
+appstore_account_save_apple_id() {
+  local name="$1" apple_id="$2" app_pwd="$3" via="${4:-altool}"
+  local file dir auth_type
+  auth_type="apple_id_${via}"
+  file=$(appstore_account_file "$name")
+  dir=$(dirname "$file")
+  mkdir -p "$dir"
+  chmod 700 "$dir"
+  cat > "$file" <<JSON
+{
+  "name": "${name}",
+  "auth_type": "${auth_type}",
+  "apple_id": "${apple_id}",
+  "app_specific_password": "${app_pwd}"
+}
+JSON
+  chmod 600 "$file"
+}
+
+# Backwards-compat: eski format'da auth_type yo'q bo'lsa "api_key" deb qabul qilamiz
+appstore_account_get_auth_type() {
+  local name="$1"
+  local at
+  at=$(appstore_account_get "$name" "auth_type")
+  [ -z "$at" ] && at="api_key"
+  printf '%s' "$at"
 }
 
 # Akkaunt nomini Key ID dan derive qilish (Apple Key ID o'zi unique)
@@ -2362,7 +2417,39 @@ appstore_add_new_account() {
 
   step "Yangi App Store akkaunti qo'shish"
   echo
-  echo -e "  ${BOLD}Sozlash usulini tanlang:${NC}"
+  echo -e "  ${BOLD}Authentication usulini tanlang:${NC}"
+  echo
+  echo -e "    ${CYAN}1${NC}) ${BOLD}API Key (.p8)${NC} ${YELLOW}— Owner/Admin role kerak${NC}"
+  echo -e "          App Store Connect → Users and Access → Integrations → Keys"
+  echo -e "          ${GREEN}(eng kuchli, team-wide)${NC}"
+  echo
+  echo -e "    ${CYAN}2${NC}) ${BOLD}Apple ID + App-specific password${NC} ${GREEN}— Developer ham qila oladi${NC}"
+  echo -e "          appleid.apple.com → Security → App-Specific Passwords"
+  echo -e "          ${YELLOW}(sizning shaxsiy Apple ID, Owner ruxsati shart emas)${NC}"
+  echo
+  echo -e "    ${CYAN}3${NC}) ${BOLD}Apple ID + Transporter app${NC}"
+  echo -e "          Transporter.app o'rnatilgan bo'lsa (Mac App Store, free)"
+  echo -e "          ${YELLOW}(Apple ID + app-specific password bilan, ammo iTMSTransporter CLI orqali)${NC}"
+  echo
+  echo -e "    ${CYAN}b${NC}) Orqaga"
+  echo
+  read -p "  Tanlang [1-3, b]: " method
+
+  case "$method" in
+    1)   appstore_add_api_key_account "$bundle" ;;
+    2)   appstore_add_apple_id_account "$bundle" "altool" ;;
+    3)   appstore_add_apple_id_account "$bundle" "transporter" ;;
+    b|B|"") return 1 ;;
+    *) warn "Noto'g'ri tanlov"; return 1 ;;
+  esac
+}
+
+# .p8 API Key bilan akkaunt qo'shish (Owner/Admin)
+appstore_add_api_key_account() {
+  local bundle="$1"
+
+  echo
+  echo -e "  ${BOLD}API Key (.p8) sozlash usulini tanlang:${NC}"
   echo -e "    ${CYAN}1${NC}) Avtomatik wizard ${GREEN}(tavsiya)${NC} — brauzer ochiladi, .p8 auto-detect"
   echo -e "    ${CYAN}2${NC}) Qo'lda kiritish — Key ID, Issuer ID, .p8 yo'l"
   echo
@@ -2396,8 +2483,7 @@ appstore_add_new_account() {
   echo
   local default_name name
   default_name=$(appstore_derive_account_name "$key_id")
-  echo -e "  ${BOLD}Akkaunt nomi${NC} — bu credentials uchun foydalanuvchi-do'st label"
-  info "Misol: 'personal', 'work-apple', 'client-xyz'"
+  echo -e "  ${BOLD}Akkaunt nomi${NC} — credentials uchun foydalanuvchi-do'st label"
   read -p "  Akkaunt nomi [${default_name}]: " name
   name="${name:-$default_name}"
   name=$(sanitize_account_name "$name")
@@ -2409,9 +2495,93 @@ appstore_add_new_account() {
   fi
 
   appstore_account_save "$name" "$key_id" "$issuer_id" "$key_path"
-  ok "Akkaunt qo'shildi: ${BOLD}${name}${NC}"
+  ok "Akkaunt qo'shildi: ${BOLD}${name}${NC} (API Key)"
 
-  # Loyihaga bog'lash
+  if [ -n "$bundle" ]; then
+    appstore_project_config_save "$bundle" "$name"
+    ok "Loyiha bog'landi: ${bundle} → '${name}'"
+  fi
+}
+
+# Apple ID + App-specific password bilan akkaunt qo'shish
+# Argument 'via': "altool" (xcrun) yoki "transporter" (iTMSTransporter)
+appstore_add_apple_id_account() {
+  local bundle="$1" via="$2"
+
+  echo
+  step "Apple ID bilan akkaunt qo'shish (${via})"
+  echo
+  info "Bu usul ${BOLD}Developer rolida ham ishlaydi${NC} — Owner ruxsati shart emas."
+  info "Sizning shaxsiy Apple ID'ingiz orqali team app'ingizga upload qiladi."
+  echo
+  echo -e "  ${BOLD}App-specific password yaratish:${NC}"
+  info "  1. appleid.apple.com → Sign In"
+  info "  2. ${BOLD}Security${NC} bo'limi → ${BOLD}App-Specific Passwords${NC}"
+  info "  3. ${BOLD}Generate Password${NC} → Label: 'flutter-build'"
+  info "  4. Yaratilgan parol formati: ${YELLOW}xxxx-xxxx-xxxx-xxxx${NC} (4 ta 4-belgili guruh)"
+  info "  5. Parolni clipboard'ga ko'chiring (bu yerda kiritamiz)"
+  echo
+  read -p "  Brauzerda ochaymi? (y/n) [y]: " openit
+  if [[ ! "$openit" =~ ^[Nn]$ ]]; then
+    open_url "https://appleid.apple.com/account/manage"
+    pause "  App-specific password yaratganingizdan keyin Enter..."
+  fi
+
+  # Transporter tanlanganda binary'ni tekshiramiz
+  if [ "$via" = "transporter" ]; then
+    local itms="/Applications/Transporter.app/Contents/itms/bin/iTMSTransporter"
+    if [ ! -x "$itms" ]; then
+      err "Transporter.app topilmadi"
+      info "Mac App Store'dan Transporter o'rnating (free, Apple rasmiy):"
+      try_this "open 'macappstore://itunes.apple.com/app/id1450874784'"
+      return 1
+    fi
+    ok "Transporter CLI topildi: $itms"
+  fi
+
+  # Apple ID va parolni kiritish
+  local apple_id app_pwd
+  echo
+  read -p "    Apple ID (email): " apple_id
+  if [[ ! "$apple_id" =~ @ ]]; then
+    err "Apple ID email shaklida bo'lishi kerak (masalan: you@example.com)"
+    return 1
+  fi
+
+  read -s -p "    App-specific password (xxxx-xxxx-xxxx-xxxx): " app_pwd
+  echo
+  if [ -z "$app_pwd" ]; then
+    err "Parol bo'sh bo'lishi mumkin emas"
+    return 1
+  fi
+
+  # Format validation (warning, lekin block emas)
+  if [[ ! "$app_pwd" =~ ^[a-zA-Z]{4}-[a-zA-Z]{4}-[a-zA-Z]{4}-[a-zA-Z]{4}$ ]]; then
+    warn "Parol formati standart emas (xxxx-xxxx-xxxx-xxxx kutilgan)"
+    info "Asosiy Apple ID parolingiz EMAS, app-specific password ishlatish kerak"
+    read -p "  Davom etamizmi shu parol bilan? (y/n) [n]: " cont
+    [[ ! "$cont" =~ ^[Yy]$ ]] && { warn "Bekor qilindi"; return 1; }
+  fi
+
+  # Akkaunt nomi
+  echo
+  local default_name name
+  default_name=$(sanitize_account_name "${apple_id%%@*}")
+  echo -e "  ${BOLD}Akkaunt nomi${NC} — credentials uchun foydalanuvchi-do'st label"
+  read -p "  Akkaunt nomi [${default_name}]: " name
+  name="${name:-$default_name}"
+  name=$(sanitize_account_name "$name")
+
+  if appstore_account_exists "$name"; then
+    warn "Akkaunt '${name}' allaqachon mavjud"
+    read -p "  Qayta yozamizmi? (y/n) [n]: " replace
+    [[ ! "$replace" =~ ^[Yy]$ ]] && { warn "Bekor qilindi"; return 1; }
+  fi
+
+  appstore_account_save_apple_id "$name" "$apple_id" "$app_pwd" "$via"
+  ok "Akkaunt qo'shildi: ${BOLD}${name}${NC} (Apple ID via ${via})"
+  warn "App-specific password ${YELLOW}~/.config/flutter-build-tool/accounts/appstore/${name}.json${NC} da saqlanadi (chmod 600)"
+
   if [ -n "$bundle" ]; then
     appstore_project_config_save "$bundle" "$name"
     ok "Loyiha bog'landi: ${bundle} → '${name}'"
@@ -2436,12 +2606,33 @@ appstore_pick_account_for_project() {
 
   echo
   echo -e "  ${BOLD}╭─ Mavjud App Store akkauntlari ──────────────────────${NC}"
-  local i=1 acc_name kid iid
+  local i=1 acc_name auth_type display
   for acc_name in "${accounts[@]}"; do
-    kid=$(appstore_account_get "$acc_name" "key_id")
-    iid=$(appstore_account_get "$acc_name" "issuer_id")
-    printf "  ${BOLD}│${NC}  ${CYAN}%d${NC}) ${BOLD}%-22s${NC} Key %s / Issuer %s…\n" \
-      "$i" "$acc_name" "$kid" "${iid:0:8}"
+    auth_type=$(appstore_account_get_auth_type "$acc_name")
+    # Auth method'ga ko'ra display
+    case "$auth_type" in
+      api_key)
+        local kid iid
+        kid=$(appstore_account_get "$acc_name" "key_id")
+        iid=$(appstore_account_get "$acc_name" "issuer_id")
+        display="API Key ${kid} / ${iid:0:8}…"
+        ;;
+      apple_id_altool)
+        local aid
+        aid=$(appstore_account_get "$acc_name" "apple_id")
+        display="Apple ID: ${aid} (altool)"
+        ;;
+      apple_id_transporter)
+        local aid
+        aid=$(appstore_account_get "$acc_name" "apple_id")
+        display="Apple ID: ${aid} (transporter)"
+        ;;
+      *)
+        display="(noma'lum auth: $auth_type)"
+        ;;
+    esac
+    printf "  ${BOLD}│${NC}  ${CYAN}%d${NC}) ${BOLD}%-22s${NC} %s\n" \
+      "$i" "$acc_name" "$display"
     i=$((i + 1))
   done
   echo -e "  ${BOLD}├──────────────────────────────────────────────────────${NC}"
@@ -2505,16 +2696,40 @@ ensure_appstore_credentials() {
       appstore_pick_account_for_project "$current_bundle" || return 1
       return 0
     else
-      local kid kp
-      kid=$(appstore_account_get "$account" "key_id")
-      kp=$(appstore_account_get "$account" "key_path")
-      if [ ! -f "$kp" ]; then
-        warn "Akkaunt '${account}' ning .p8 fayli yo'qolgan: $kp"
-        appstore_add_new_account "" || return 1
-        appstore_pick_account_for_project "$current_bundle" || return 1
-        return 0
-      fi
-      ok "App Store: ${BOLD}${current_bundle}${NC} → '${BOLD}${account}${NC}' (Key ${YELLOW}${kid}${NC}) ${CYAN}(saqlangan)${NC}"
+      # Auth_type'ga ko'ra tekshirish
+      local auth_type
+      auth_type=$(appstore_account_get_auth_type "$account")
+
+      case "$auth_type" in
+        api_key)
+          local kid kp
+          kid=$(appstore_account_get "$account" "key_id")
+          kp=$(appstore_account_get "$account" "key_path")
+          if [ ! -f "$kp" ]; then
+            warn "Akkaunt '${account}' ning .p8 fayli yo'qolgan: $kp"
+            appstore_add_new_account "" || return 1
+            appstore_pick_account_for_project "$current_bundle" || return 1
+            return 0
+          fi
+          ok "App Store: ${BOLD}${current_bundle}${NC} → '${BOLD}${account}${NC}' (API Key ${YELLOW}${kid}${NC}) ${CYAN}(saqlangan)${NC}"
+          ;;
+        apple_id_altool|apple_id_transporter)
+          local aid via
+          aid=$(appstore_account_get "$account" "apple_id")
+          via="${auth_type#apple_id_}"
+          if [ "$via" = "transporter" ] && [ ! -x "/Applications/Transporter.app/Contents/itms/bin/iTMSTransporter" ]; then
+            warn "Akkaunt '${account}' Transporter ishlatmoqchi, lekin Transporter.app topilmadi"
+            try_this "open 'macappstore://itunes.apple.com/app/id1450874784'"
+            return 1
+          fi
+          ok "App Store: ${BOLD}${current_bundle}${NC} → '${BOLD}${account}${NC}' (Apple ID ${YELLOW}${aid}${NC} via ${via}) ${CYAN}(saqlangan)${NC}"
+          ;;
+        *)
+          warn "Akkaunt '${account}' noma'lum auth_type'ga ega: $auth_type"
+          info "Qayta sozlash uchun: flutter-build --settings"
+          return 1
+          ;;
+      esac
       return 0
     fi
   fi
@@ -2588,7 +2803,36 @@ find_latest_ipa() {
   echo "$ipa"
 }
 
-# xcrun altool orqali App Store Connect ga yuklash
+# Upload xato bo'lganda umumiy recovery tavsiyalari (auth_type'ga qarab)
+appstore_upload_recovery_hints() {
+  local auth_type="$1"
+  echo
+  info "Eng keng tarqalgan sabablar va yechimlar:"
+  info "  ${BOLD}• Bundle ID App Store Connect'da yaratilmagan${NC}"
+  try_this "open https://appstoreconnect.apple.com/apps   # 'New App' tugmasini bosing"
+  info "  ${BOLD}• Versiya raqami avval yuklangan${NC}"
+  try_this "flutter-build   # menu'da versiyaga '+' bosing (+1 oshiradi)"
+  info "  ${BOLD}• Distribution certificate yaroqsiz/eskirgan${NC}"
+  try_this "open 'Xcode → Settings → Accounts → Manage Certificates'"
+  info "  ${BOLD}• ExportOptions.plist'da Team ID noto'g'ri${NC}"
+  try_this \
+    "rm ios/ExportOptions.plist                # qayta yaratish uchun" \
+    "flutter-build --settings                   # Team ID ni global default qiling"
+
+  if [[ "$auth_type" == apple_id* ]]; then
+    info "  ${BOLD}• App-specific password noto'g'ri yoki eskirgan${NC}"
+    try_this \
+      "open https://appleid.apple.com/account/manage   # Security → App-Specific Passwords" \
+      "flutter-build --settings   # → 2) Akkauntlar → o'chirib, yangidan qo'shing"
+    info "  ${BOLD}• Sizning Apple ID team'ga qo'shilmagan${NC}"
+    info "       Owner sizni App Store Connect → Users and Access da qo'shishi kerak"
+  else
+    info "  ${BOLD}• API Key (.p8) o'chirilgan yoki eskirgan${NC}"
+    try_this "open https://appstoreconnect.apple.com/access/integrations/api"
+  fi
+}
+
+# v1.12.0: Multi-method upload — auth_type'ga ko'ra dispatcher
 upload_to_appstore() {
   local ipa="$1"
 
@@ -2601,8 +2845,8 @@ upload_to_appstore() {
     return 1
   fi
 
-  # Bundle → akkaunt → key resolve
-  local bundle_id account kid iid
+  # Bundle → akkaunt resolve
+  local bundle_id account auth_type
   bundle_id=$(detect_ios_bundle_id)
   if [ -z "$bundle_id" ]; then
     err "iOS bundle id aniqlanmadi"
@@ -2619,28 +2863,56 @@ upload_to_appstore() {
     return 1
   fi
 
-  kid=$(appstore_account_get "$account" "key_id")
-  iid=$(appstore_account_get "$account" "issuer_id")
-
-  if [ -z "$kid" ] || [ -z "$iid" ]; then
-    err "App Store Connect API sozlanmagan (akkaunt: ${account})"
-    return 1
-  fi
-
   if [ ! -f "$ipa" ]; then
     err "IPA fayl topilmadi: $ipa"
     return 1
   fi
 
-  local size_kb
+  auth_type=$(appstore_account_get_auth_type "$account")
+
+  local size_kb size_mb
   size_kb=$(du -k "$ipa" | cut -f1)
-  info "IPA:    $ipa ($((size_kb / 1024)) MB)"
-  info "Key ID: $kid"
+  size_mb=$((size_kb / 1024))
+  info "IPA:        $ipa (${size_mb} MB)"
+  info "Akkaunt:    ${BOLD}${account}${NC}"
+  info "Auth usuli: ${BOLD}${auth_type}${NC}"
+
+  # Auth method'ga ko'ra dispatch
+  case "$auth_type" in
+    api_key)
+      appstore_upload_via_api_key "$ipa" "$account"
+      ;;
+    apple_id_altool)
+      appstore_upload_via_apple_id_altool "$ipa" "$account"
+      ;;
+    apple_id_transporter)
+      appstore_upload_via_apple_id_transporter "$ipa" "$account"
+      ;;
+    *)
+      err "Noma'lum auth_type: $auth_type"
+      info "Akkauntni qayta sozlang:"
+      try_this "flutter-build --settings   # → 2) Akkauntlar → o'chirib, qayta qo'shing"
+      return 1
+      ;;
+  esac
+}
+
+# Method 1: API Key (.p8) — Owner/Admin
+appstore_upload_via_api_key() {
+  local ipa="$1" account="$2"
+  local kid iid
+  kid=$(appstore_account_get "$account" "key_id")
+  iid=$(appstore_account_get "$account" "issuer_id")
+
+  if [ -z "$kid" ] || [ -z "$iid" ]; then
+    err "API Key sozlamasi to'liq emas (Key ID yoki Issuer ID yo'q)"
+    return 1
+  fi
+
+  info "Key ID:     $kid"
   info "Jarayon 5-30 daqiqa davom etishi mumkin. Ulanish uzilmasligi muhim."
   echo
 
-  # altool sahna ortida API Key faylini ~/.appstoreconnect/private_keys/ dan topadi
-  # (yoki ./private_keys/, yoki shunga o'xshash yo'llardan)
   if xcrun altool --upload-app \
        --type ios \
        --file "$ipa" \
@@ -2652,20 +2924,81 @@ upload_to_appstore() {
     info "Status uchun email kuting yoki: https://appstoreconnect.apple.com/apps"
     return 0
   else
+    err "Yuklash xato berdi"
+    appstore_upload_recovery_hints "api_key"
+    return 1
+  fi
+}
+
+# Method 2: Apple ID + App-specific password orqali xcrun altool
+appstore_upload_via_apple_id_altool() {
+  local ipa="$1" account="$2"
+  local apple_id app_pwd
+  apple_id=$(appstore_account_get "$account" "apple_id")
+  app_pwd=$(appstore_account_get "$account" "app_specific_password")
+
+  if [ -z "$apple_id" ] || [ -z "$app_pwd" ]; then
+    err "Apple ID yoki app-specific password yo'q (akkaunt: ${account})"
+    return 1
+  fi
+
+  info "Apple ID:   ${apple_id}"
+  info "Tool:       xcrun altool"
+  info "Jarayon 5-30 daqiqa davom etishi mumkin. Ulanish uzilmasligi muhim."
+  echo
+
+  if xcrun altool --upload-app \
+       --type ios \
+       --file "$ipa" \
+       --username "$apple_id" \
+       --password "$app_pwd"; then
     echo
-    err "Yuklash xato berdi — yuqorida xato matnini ko'ring"
+    ok "Muvaffaqiyatli yuklandi!"
+    info "TestFlight processing 10-30 daqiqa davom etadi"
+    return 0
+  else
+    err "Yuklash xato berdi"
+    appstore_upload_recovery_hints "apple_id_altool"
+    return 1
+  fi
+}
+
+# Method 3: Apple ID + iTMSTransporter CLI (Transporter.app)
+appstore_upload_via_apple_id_transporter() {
+  local ipa="$1" account="$2"
+  local apple_id app_pwd itms
+
+  apple_id=$(appstore_account_get "$account" "apple_id")
+  app_pwd=$(appstore_account_get "$account" "app_specific_password")
+  itms="/Applications/Transporter.app/Contents/itms/bin/iTMSTransporter"
+
+  if [ -z "$apple_id" ] || [ -z "$app_pwd" ]; then
+    err "Apple ID yoki app-specific password yo'q"
+    return 1
+  fi
+  if [ ! -x "$itms" ]; then
+    err "iTMSTransporter binary topilmadi: $itms"
+    info "Mac App Store'dan Transporter.app o'rnating:"
+    try_this "open 'macappstore://itunes.apple.com/app/id1450874784'"
+    return 1
+  fi
+
+  info "Apple ID:   ${apple_id}"
+  info "Tool:       iTMSTransporter (Transporter.app CLI)"
+  info "Jarayon 5-30 daqiqa davom etishi mumkin"
+  echo
+
+  if "$itms" -m upload \
+       -u "$apple_id" \
+       -p "$app_pwd" \
+       -assetFile "$ipa"; then
     echo
-    info "Eng keng tarqalgan sabablar va yechimlar:"
-    info "  ${BOLD}• Bundle ID App Store Connect'da yaratilmagan${NC}"
-    try_this "open https://appstoreconnect.apple.com/apps   # 'New App' tugmasini bosing"
-    info "  ${BOLD}• Versiya raqami avval yuklangan${NC}"
-    try_this "flutter-build   # menu'da versiyaga '+' bosing (+1 oshiradi)"
-    info "  ${BOLD}• Distribution certificate yaroqsiz/eskirgan${NC}"
-    try_this "open 'Xcode → Settings → Accounts → Manage Certificates'"
-    info "  ${BOLD}• ExportOptions.plist'da Team ID noto'g'ri${NC}"
-    try_this \
-      "rm ios/ExportOptions.plist                # qayta yaratish uchun" \
-      "flutter-build --settings                   # Team ID ni global default qiling"
+    ok "Muvaffaqiyatli yuklandi (Transporter)!"
+    info "TestFlight processing 10-30 daqiqa davom etadi"
+    return 0
+  else
+    err "Yuklash xato berdi"
+    appstore_upload_recovery_hints "apple_id_transporter"
     return 1
   fi
 }
