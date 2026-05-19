@@ -5,6 +5,59 @@ Loyihaning barcha muhim o'zgarishlari shu faylga yoziladi.
 Format [Keep a Changelog](https://keepachangelog.com/uz/1.1.0/) asosida,
 versiyalash esa [Semantic Versioning](https://semver.org/lang/uz/) qoidasiga rioya qiladi.
 
+## [1.12.1] — 2026-05-19
+
+### Tuzatildi — Transporter "Client configuration failed" auto-recovery
+
+iTMSTransporter (Method 3) `Client configuration failed` xato bersa,
+endi skript:
+
+1. **Xatoni aniqlaydi** — output'ni `tee` orqali capture qilib, pattern
+   matching bilan ("Client configuration failed", "Unauthorized" va h.k.)
+2. **Avtomatik altool taklif qiladi** — xuddi shu credentials bilan
+   Method 2 (xcrun altool) ga o'tib qayta urinish:
+   ```
+   ⚠ Bu Transporter'ning 'Client configuration failed' xatosi
+   ℹ Sabab: bundled Java JRE buzuq yoki cache muammosi
+
+   🎯 Eng tezkor yechim: altool method'iga o'tish
+     Xuddi shu Apple ID + password ishlatadi, lekin xcrun altool
+     (Apple'ning native binary'si — Java kerak emas, ishonchli)
+
+     Hozir altool bilan qayta urinaylikmi? (y/n) [y]: _
+   ```
+3. **Muvaffaqiyatli bo'lsa** — akkauntni altool'ga doimiy ko'chirish
+   taklif qilinadi
+4. **Bo'lmasa** — Transporter saqlash uchun yechimlar (cache tozalash,
+   Transporter yangilash)
+
+### Qo'shildi
+
+- **`--doctor` Transporter Java tekshiruvi**: bundled Java
+  (`/Applications/Transporter.app/Contents/itms/java/bin/java`) mavjudligini
+  oldindan tekshiradi. Buzuq bo'lsa ogohlantiradi.
+- **Auth method tanlashda warning**: Method 3 (Transporter) tanlashda
+  "⚠ Tavsiya: Method 2 (altool) ishonchliroq" yozuvi ko'rsatiladi.
+- **Authentication failed pattern** uchun maxsus recovery (Apple ID yoki
+  password noto'g'ri bo'lsa).
+
+### Texnik tafsilot
+
+`tee` + `PIPESTATUS[0]` pattern'i ishlatildi — Transporter output'i
+real-time ko'rsatiladi (foydalanuvchi progress'ni ko'radi) va bir vaqtda
+fayl'ga capture qilinadi (error pattern matching uchun). Bu **bash
+3.2+ specific** lekin bizning skript bu versiyani majburiy qiladi.
+
+### Foydalanuvchi nuqtai nazaridan
+
+Bu real bug report'dan keldi: foydalanuvchi Method 3 (Transporter)
+tanlagan edi va "Client configuration failed" xato oldi. Endi skript
+o'zi xatoni aniqlab, **bir bosishda** altool'ga o'tib qayta urinadi.
+
+Test: 6/6 unit test
+- Error pattern matching (Client config, Auth failed, boshqa)
+- PIPESTATUS[0] (bash 3.2+ specific)
+
 ## [1.12.0] — 2026-05-14
 
 ### Qo'shildi — iOS uchun 3 ta auth method
@@ -638,6 +691,7 @@ yangi yo'lni oladi (3 loyiha → 1 ta fayl tahriri).
 - AAB va APK formatlari, Production va Debug rejimlari.
 - Build natijalarini Finder'da avtomatik ochish.
 
+[1.12.1]: https://github.com/Jaloliddin-Fozilov/flutter-build-tool/releases/tag/v1.12.1
 [1.12.0]: https://github.com/Jaloliddin-Fozilov/flutter-build-tool/releases/tag/v1.12.0
 [1.11.0]: https://github.com/Jaloliddin-Fozilov/flutter-build-tool/releases/tag/v1.11.0
 [1.10.1]: https://github.com/Jaloliddin-Fozilov/flutter-build-tool/releases/tag/v1.10.1

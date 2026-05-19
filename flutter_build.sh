@@ -22,7 +22,7 @@
 set -eo pipefail
 
 # ─── Skript ma'lumotlari ──────────────────────────────────
-SCRIPT_VERSION="1.12.0"
+SCRIPT_VERSION="1.12.1"
 SCRIPT_REPO="Jaloliddin-Fozilov/flutter-build-tool"
 SCRIPT_RAW_URL="https://raw.githubusercontent.com/${SCRIPT_REPO}/main/flutter_build.sh"
 
@@ -266,8 +266,17 @@ run_diagnostics() {
 
     # Transporter.app mavjudligi (3-method uchun)
     local itms="/Applications/Transporter.app/Contents/itms/bin/iTMSTransporter"
+    local trans_java="/Applications/Transporter.app/Contents/itms/java/bin/java"
     if [ -x "$itms" ]; then
       ok "Transporter.app         (iTMSTransporter CLI mavjud)"
+      # Bundled Java tekshiruvi (Client configuration failed muammosi sababi)
+      if [ -x "$trans_java" ]; then
+        ok "       Bundled Java OK   (iTMSTransporter ishlay olishi kerak)"
+      else
+        warn "       Bundled Java buzuq — 'Client configuration failed' xato berishi mumkin"
+        info "       Yechim: App Store'dan Transporter.app yangilang yoki altool method'ini ishlating"
+        warns=$((warns + 1))
+      fi
     else
       info "Transporter.app yo'q   (ixtiyoriy — Apple ID upload uchun backup)"
       info "       Mac App Store'da bepul"
@@ -2430,6 +2439,7 @@ appstore_add_new_account() {
   echo -e "    ${CYAN}3${NC}) ${BOLD}Apple ID + Transporter app${NC}"
   echo -e "          Transporter.app o'rnatilgan bo'lsa (Mac App Store, free)"
   echo -e "          ${YELLOW}(Apple ID + app-specific password bilan, ammo iTMSTransporter CLI orqali)${NC}"
+  echo -e "          ${RED}⚠ Tavsiya: Method 2 (altool) ishonchliroq — Transporter Java muammolari bo'lishi mumkin${NC}"
   echo
   echo -e "    ${CYAN}b${NC}) Orqaga"
   echo
@@ -2988,19 +2998,87 @@ appstore_upload_via_apple_id_transporter() {
   info "Jarayon 5-30 daqiqa davom etishi mumkin"
   echo
 
-  if "$itms" -m upload \
+  # v1.12.1: Output'ni ham ko'rsatamiz, ham capture qilamiz (tee orqali)
+  # — real-time progress yoqotmaymiz, lekin error pattern'larni topa olamiz
+  local output_file rc
+  output_file=$(mktemp)
+
+  "$itms" -m upload \
        -u "$apple_id" \
        -p "$app_pwd" \
-       -assetFile "$ipa"; then
+       -assetFile "$ipa" 2>&1 | tee "$output_file"
+  rc=${PIPESTATUS[0]}
+
+  if [ "$rc" -eq 0 ]; then
+    rm -f "$output_file"
     echo
     ok "Muvaffaqiyatli yuklandi (Transporter)!"
     info "TestFlight processing 10-30 daqiqa davom etadi"
     return 0
-  else
-    err "Yuklash xato berdi"
-    appstore_upload_recovery_hints "apple_id_transporter"
+  fi
+
+  # Xato — pattern aniqlash va auto-fallback taklifi
+  local output
+  output=$(cat "$output_file")
+  rm -f "$output_file"
+
+  err "Transporter yuklash xato berdi (rc=$rc)"
+
+  # Specific error: "Client configuration failed" — Transporter ichki muammosi
+  if echo "$output" | grep -q "Client configuration failed"; then
+    echo
+    warn "Bu Transporter'ning '${BOLD}Client configuration failed${NC}' xatosi"
+    info "Sabab odatda quyidagilardan biri:"
+    info "  • Bundled Java JRE buzuq yoki eskirgan (Transporter.app ichidagi)"
+    info "  • ~/.itmstransporter/ ruxsatlari yoki cache muammosi"
+    info "  • Transporter.app versiyasi eskirgan"
+    echo
+    info "${BOLD}🎯 Eng tezkor yechim: altool method'iga o'tish${NC}"
+    info "  Xuddi shu Apple ID + password ishlatadi, lekin xcrun altool"
+    info "  (Apple'ning native binary'si — Java kerak emas, ishonchli)"
+    echo
+    read -p "  Hozir altool bilan qayta urinaylikmi? (y/n) [y]: " try_altool
+    if [[ ! "$try_altool" =~ ^[Nn]$ ]]; then
+      echo
+      info "altool bilan qayta urinish..."
+      echo
+      appstore_upload_via_apple_id_altool "$ipa" "$account"
+      local altool_rc=$?
+      if [ "$altool_rc" -eq 0 ]; then
+        echo
+        ok "✓ altool muvaffaqiyatli ishladi!"
+        info "Tavsiya: ${BOLD}akkauntni altool method'iga o'tkazing${NC} (Transporter kerak emas):"
+        try_this \
+          "flutter-build --settings   # → 2) Akkauntlar → ${account} o'chirib qayta yarating" \
+          "# Bu safar: 2 (Apple ID + altool) tanlang"
+      fi
+      return $altool_rc
+    fi
+    echo
+    info "Boshqa yechimlar (Transporter saqlash uchun):"
+    try_this \
+      "open '/Applications/Transporter.app'   # qo'lda ochib drag-drop sinab ko'rish" \
+      "rm -rf ~/.itmstransporter && retry      # cache tozalash" \
+      "open 'macappstore://itunes.apple.com/app/id1450874784'   # Transporter yangilash"
     return 1
   fi
+
+  # Specific error: Authentication / Unauthorized
+  if echo "$output" | grep -qE "Unauthorized|Authentication failed|Invalid password|401"; then
+    echo
+    warn "Authentication xato — Apple ID yoki password noto'g'ri"
+    info "App-specific password tekshiruvi:"
+    info "  • Apple asosiy paroli EMAS (xxxx-xxxx-xxxx-xxxx format'da)"
+    info "  • Eskirgan yoki revoked bo'lishi mumkin"
+    try_this \
+      "open https://appleid.apple.com/account/manage   # Security → App-Specific Passwords" \
+      "flutter-build --settings   # → 2) Akkauntlar → o'chirib yangidan qo'shing"
+    return 1
+  fi
+
+  # Boshqa xatolar — umumiy recovery
+  appstore_upload_recovery_hints "apple_id_transporter"
+  return 1
 }
 
 # ─── Android Play Store deploy yordamchi funksiyalari ─────
