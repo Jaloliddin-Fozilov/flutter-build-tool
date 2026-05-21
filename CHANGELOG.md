@@ -5,6 +5,82 @@ Loyihaning barcha muhim o'zgarishlari shu faylga yoziladi.
 Format [Keep a Changelog](https://keepachangelog.com/uz/1.1.0/) asosida,
 versiyalash esa [Semantic Versioning](https://semver.org/lang/uz/) qoidasiga rioya qiladi.
 
+## [1.12.2] — 2026-05-21
+
+### Tuzatildi — KRITIK: altool false positive (HTTP 4xx'da "Muvaffaqiyatli" deb ko'rsatardi)
+
+User real bug report: `xcrun altool` HTTP 409 (duplicate version) xato
+berdi, lekin skript "✓ Muvaffaqiyatli yuklandi!" deb ko'rsatdi.
+
+Sabab: `xcrun altool` ba'zi Xcode versiyalarida HTTP 4xx (server rejection)
+holatda ham **exit code 0** qaytaradi. Sabab — Apple ContentDelivery
+framework "request completed" deb hisoblaydi, javob HTTP 4xx bo'lsa ham.
+
+Bu **false positive** — foydalanuvchi noto'g'ri "success" ekraniga ishonib,
+upload bo'lmaganini bilmasdan team'iga xabar yuborishi mumkin edi.
+
+### Yangi mexanizm: "Trust but verify"
+
+`appstore_upload_via_apple_id_altool` va `appstore_upload_via_api_key`
+endi:
+
+1. **`tee` orqali output capture** — real-time progress saqlanadi
+2. **`${PIPESTATUS[0]}` orqali exit code** — `tee`'niki emas, `altool`'niki
+3. **Output pattern matching** — `ERROR:`, `Failed to upload`, `ENTITY_ERROR`,
+   `status : 4xx/5xx` pattern'larini qidiradi
+4. **Exit 0 BO'LSA HAM** output'da xato pattern bo'lsa, **failure deb belgilaydi**
+
+### Yangi helperlar
+
+- `appstore_altool_output_has_errors` — pattern detector (DRY, 3 ta upload
+  funksiyada ishlatiladi)
+- `appstore_handle_409_duplicate` — 409 specific recovery:
+  - `previousBundleVersion` ni output'dan extract qiladi
+  - Foydalanuvchiga aniq qaysi build raqami konflikt'da bo'lganini aytadi
+  - 3 ta yechim variantini ko'rsatadi:
+    - A) pubspec.yaml'da `+` bilan oshirish
+    - B) `flutter clean` + qayta build (cache muammosi)
+    - C) iOS project.pbxproj sync emas (eski loyihalarda)
+
+### Yangi specific error handling
+
+**409 Duplicate Bundle Version:**
+```
+⚠ Bundle version conflict: Apple'da allaqachon build 4 bor
+ℹ Yangi build raqami > 4 bo'lishi shart
+
+🎯 Sabab va yechim:
+
+  A) Build raqami pubspec.yaml'da hali oshirilmagan
+     → flutter-build   # menu'da build #ga '+' bosing
+
+  B) Pubspec'da yangi build bor, lekin IPA'da hali eski (cache)
+     → rm -rf build/ios
+     → flutter clean
+     → flutter-build (clean va pub get yoqib)
+
+  C) iOS project.pbxproj sync emas (FLUTTER_BUILD_NUMBER ref emas)
+     → grep CURRENT_PROJECT_VERSION ios/Runner.xcodeproj/project.pbxproj
+```
+
+**Authentication errors** (Unauthorized, 401, 403) uchun ham specific recovery.
+
+### Texnik tafsilot
+
+`tee` + `${PIPESTATUS[0]}` pattern bash 3.2+ specific. Bizning skript
+bash'ni majburiy qiladi (shebang `#!/usr/bin/env bash`).
+
+Layer mismatch tushunchasi: altool'da "transport success" (HTTP request
+yetkazib berildi) ≠ "business success" (Apple qabul qildi). To'g'ri
+yechim — response BODY'sini parse qilish.
+
+Test: 6/6 unit test
+- 409 duplicate pattern detection (real user output bilan)
+- Success output → ERROR yo'q
+- `previousBundleVersion` extraction
+- Authentication error pattern
+- **Eng kritik: exit=0 + ERROR pattern → failure**
+
 ## [1.12.1] — 2026-05-19
 
 ### Tuzatildi — Transporter "Client configuration failed" auto-recovery
@@ -691,6 +767,7 @@ yangi yo'lni oladi (3 loyiha → 1 ta fayl tahriri).
 - AAB va APK formatlari, Production va Debug rejimlari.
 - Build natijalarini Finder'da avtomatik ochish.
 
+[1.12.2]: https://github.com/Jaloliddin-Fozilov/flutter-build-tool/releases/tag/v1.12.2
 [1.12.1]: https://github.com/Jaloliddin-Fozilov/flutter-build-tool/releases/tag/v1.12.1
 [1.12.0]: https://github.com/Jaloliddin-Fozilov/flutter-build-tool/releases/tag/v1.12.0
 [1.11.0]: https://github.com/Jaloliddin-Fozilov/flutter-build-tool/releases/tag/v1.11.0

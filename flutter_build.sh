@@ -22,7 +22,7 @@
 set -eo pipefail
 
 # ─── Skript ma'lumotlari ──────────────────────────────────
-SCRIPT_VERSION="1.12.1"
+SCRIPT_VERSION="1.12.2"
 SCRIPT_REPO="Jaloliddin-Fozilov/flutter-build-tool"
 SCRIPT_RAW_URL="https://raw.githubusercontent.com/${SCRIPT_REPO}/main/flutter_build.sh"
 
@@ -2813,6 +2813,52 @@ find_latest_ipa() {
   echo "$ipa"
 }
 
+# v1.12.2: altool output'da xato pattern'larini aniqlash
+# xcrun altool ba'zan HTTP 4xx holatda ham exit code 0 qaytaradi.
+# Bu false positive — output'ni parse qilib haqiqiy holatni aniqlaymiz.
+#
+# Returns:
+#   0 — haqiqatan muvaffaqiyatli (no error patterns)
+#   1 — output'da xato pattern topildi (false positive himoyalandi)
+appstore_altool_output_has_errors() {
+  local output="$1"
+  # Apple ContentDelivery / altool xato pattern'lari
+  echo "$output" | grep -qE "^[0-9-]+ +[0-9:.]+ ERROR:|Failed to upload|ENTITY_ERROR|status : [45][0-9][0-9]"
+}
+
+# 409 Duplicate version'ni aniqlash va batafsil recovery taklif qilish
+appstore_handle_409_duplicate() {
+  local output="$1"
+  local prev_ver
+  prev_ver=$(echo "$output" | grep -o "previousBundleVersion[[:space:]]*:[[:space:]]*[0-9]*" \
+    | head -1 | grep -o "[0-9]*$")
+  [ -z "$prev_ver" ] && prev_ver="?"
+
+  echo
+  warn "Bundle version conflict: Apple'da allaqachon build ${BOLD}${prev_ver}${NC} bor"
+  info "Yangi build raqami ${BOLD}> ${prev_ver}${NC} bo'lishi shart"
+  echo
+  info "${BOLD}🎯 Sabab va yechim:${NC}"
+  info ""
+  info "  ${BOLD}A) Build raqami pubspec.yaml'da hali oshirilmagan${NC}"
+  try_this \
+    "flutter-build   # menu'da build #ga '+' bosing (avtomatik +1)" \
+    "# yoki: pubspec.yaml'da version: X.Y.Z+N → N+1 ga qo'lda o'zgartiring"
+  echo
+  info "  ${BOLD}B) Pubspec'da yangi build bor, lekin IPA'da hali eski (cache)${NC}"
+  info "       Bu Flutter build cache muammosi — eski IPA qayta upload bo'lyapti"
+  try_this \
+    "rm -rf build/ios   # eski IPA o'chirish" \
+    "flutter clean       # to'liq cache tozalash" \
+    "flutter-build       # qayta build (menu'da 'flutter clean' va 'flutter pub get' yoqing)"
+  echo
+  info "  ${BOLD}C) iOS project.pbxproj sync emas${NC}"
+  info "       Eski iOS loyihalarda CFBundleVersion hardcoded bo'lishi mumkin"
+  info "       (Flutter reference \$(FLUTTER_BUILD_NUMBER) ishlatmagan)"
+  try_this \
+    "grep CURRENT_PROJECT_VERSION ios/Runner.xcodeproj/project.pbxproj   # tekshirish"
+}
+
 # Upload xato bo'lganda umumiy recovery tavsiyalari (auth_type'ga qarab)
 appstore_upload_recovery_hints() {
   local auth_type="$1"
@@ -2908,6 +2954,7 @@ upload_to_appstore() {
 }
 
 # Method 1: API Key (.p8) — Owner/Admin
+# v1.12.2: output capture + false positive guard
 appstore_upload_via_api_key() {
   local ipa="$1" account="$2"
   local kid iid
@@ -2923,24 +2970,56 @@ appstore_upload_via_api_key() {
   info "Jarayon 5-30 daqiqa davom etishi mumkin. Ulanish uzilmasligi muhim."
   echo
 
-  if xcrun altool --upload-app \
+  # tee orqali real-time output + capture
+  local output_file rc output
+  output_file=$(mktemp)
+
+  xcrun altool --upload-app \
        --type ios \
        --file "$ipa" \
        --apiKey "$kid" \
-       --apiIssuer "$iid"; then
+       --apiIssuer "$iid" 2>&1 | tee "$output_file"
+  rc=${PIPESTATUS[0]}
+
+  output=$(cat "$output_file")
+  rm -f "$output_file"
+
+  # CRITICAL: altool ba'zan exit 0 qaytaradi HTTP 4xx holatda ham (false positive)
+  if [ "$rc" -eq 0 ] && ! appstore_altool_output_has_errors "$output"; then
     echo
     ok "Muvaffaqiyatli yuklandi!"
     info "TestFlight processing 10-30 daqiqa davom etadi"
     info "Status uchun email kuting yoki: https://appstoreconnect.apple.com/apps"
     return 0
-  else
-    err "Yuklash xato berdi"
-    appstore_upload_recovery_hints "api_key"
+  fi
+
+  # Failure
+  echo
+  err "Yuklash xato berdi (rc=${rc}, output'da ERROR pattern topildi)"
+  if [ "$rc" -eq 0 ]; then
+    warn "altool exit code = 0 lekin output'da xato bor — false positive himoyalandi"
+  fi
+
+  # Specific: 409 duplicate version
+  if echo "$output" | grep -qE "ENTITY_ERROR.ATTRIBUTE.INVALID.DUPLICATE|already been used|previousBundleVersion"; then
+    appstore_handle_409_duplicate "$output"
     return 1
   fi
+
+  # Specific: API Key authentication errors
+  if echo "$output" | grep -qE "Unauthorized|Invalid.*Key|status : 40[13]"; then
+    echo
+    warn "API Key authentication xato"
+    try_this "open https://appstoreconnect.apple.com/access/integrations/api"
+    return 1
+  fi
+
+  appstore_upload_recovery_hints "api_key"
+  return 1
 }
 
 # Method 2: Apple ID + App-specific password orqali xcrun altool
+# v1.12.2: output capture + false positive guard (altool ba'zan 4xx'da ham 0 qaytaradi)
 appstore_upload_via_apple_id_altool() {
   local ipa="$1" account="$2"
   local apple_id app_pwd
@@ -2957,20 +3036,59 @@ appstore_upload_via_apple_id_altool() {
   info "Jarayon 5-30 daqiqa davom etishi mumkin. Ulanish uzilmasligi muhim."
   echo
 
-  if xcrun altool --upload-app \
+  # tee orqali real-time output + capture
+  local output_file rc output
+  output_file=$(mktemp)
+
+  xcrun altool --upload-app \
        --type ios \
        --file "$ipa" \
        --username "$apple_id" \
-       --password "$app_pwd"; then
+       --password "$app_pwd" 2>&1 | tee "$output_file"
+  rc=${PIPESTATUS[0]}
+
+  output=$(cat "$output_file")
+  rm -f "$output_file"
+
+  # CRITICAL: altool ba'zan exit 0 qaytaradi HTTP 4xx holatda ham (false positive)
+  # Output'da xato pattern bo'lsa, false positive deb hisoblaymiz
+  if [ "$rc" -eq 0 ] && ! appstore_altool_output_has_errors "$output"; then
     echo
     ok "Muvaffaqiyatli yuklandi!"
     info "TestFlight processing 10-30 daqiqa davom etadi"
+    info "Status uchun email kuting yoki: https://appstoreconnect.apple.com/apps"
     return 0
-  else
-    err "Yuklash xato berdi"
-    appstore_upload_recovery_hints "apple_id_altool"
+  fi
+
+  # Failure
+  echo
+  err "Yuklash xato berdi (rc=${rc}, output'da ERROR pattern topildi)"
+  if [ "$rc" -eq 0 ]; then
+    warn "altool exit code = 0 lekin output'da xato bor — false positive himoyalandi"
+  fi
+
+  # Specific: 409 duplicate version
+  if echo "$output" | grep -qE "ENTITY_ERROR.ATTRIBUTE.INVALID.DUPLICATE|already been used|previousBundleVersion"; then
+    appstore_handle_409_duplicate "$output"
     return 1
   fi
+
+  # Specific: authentication errors
+  if echo "$output" | grep -qE "Unauthorized|Authentication failed|Invalid password|status : 40[13]"; then
+    echo
+    warn "Authentication xato — Apple ID yoki app-specific password noto'g'ri"
+    info "App-specific password tekshiruvi:"
+    info "  • Apple asosiy paroli EMAS (xxxx-xxxx-xxxx-xxxx format'da)"
+    info "  • Eskirgan yoki revoke qilingan bo'lishi mumkin"
+    try_this \
+      "open https://appleid.apple.com/account/manage   # Security → App-Specific Passwords" \
+      "flutter-build --settings   # → 2) Akkauntlar → o'chirib yangidan qo'shing"
+    return 1
+  fi
+
+  # Generic recovery
+  appstore_upload_recovery_hints "apple_id_altool"
+  return 1
 }
 
 # Method 3: Apple ID + iTMSTransporter CLI (Transporter.app)
