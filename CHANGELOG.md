@@ -5,6 +5,109 @@ Loyihaning barcha muhim o'zgarishlari shu faylga yoziladi.
 Format [Keep a Changelog](https://keepachangelog.com/uz/1.1.0/) asosida,
 versiyalash esa [Semantic Versioning](https://semver.org/lang/uz/) qoidasiga rioya qiladi.
 
+## [1.12.3] — 2026-05-21
+
+### Tuzatildi — Play Store: promotion upload fail bo'lganda chaqirilmasin + edit context bug
+
+User real bug: Play Store upload muvaffaqiyatsiz tugadi, lekin skript baribir
+`play_suggest_promotion` chaqirdi. User "y" bosgan edi → promotion bo'sh
+track'dan o'qishga harakat qildi → "internal track'da release topilmadi" xato.
+
+### Bug #1: `|| warn` silent failure suppression
+
+Build flow'da:
+```bash
+# Eski (xato):
+upload_to_play_store "$aab_file" || warn "Upload xato"
+
+if [ "$current_track" != "production" ]; then
+  play_suggest_promotion ...   # ← har doim chaqiriladi, hatto xato bo'lsa ham!
+fi
+```
+
+`||` operator faqat warn'ni chaqiradi — keyingi kod doimo ishlaydi.
+
+**Fix:** Explicit flag bilan:
+```bash
+local play_upload_ok=true
+upload_to_play_store "$aab_file" || {
+  warn "Upload xato berdi"
+  info "Promotion taklif qilinmaydi (chunki upload bo'lmadi)"
+  play_upload_ok=false
+}
+
+if $play_upload_ok && [ "$current_track" != "production" ]; then
+  play_suggest_promotion ...
+fi
+```
+
+### Bug #2: `play_list_track_releases` edit context'isiz
+
+Avval `GET /applications/{pkg}/tracks/{track}` ishlatardik — bu Google Play
+API'da **eventual consistency** muammosiga duch keladi (yangi yuklangan
+release darrov ko'rinmasligi mumkin).
+
+**Fix:** Edit transaction ichida o'qish:
+```bash
+# 1) POST /edits → editId yaratish
+# 2) GET /edits/{editId}/tracks/{track} → snapshot read
+# 3) DELETE /edits/{editId} → cleanup (commit qilmaymiz, o'qish edi)
+```
+
+Bu DBMS'dagi `BEGIN TRANSACTION ... ROLLBACK` patterniga o'xshash.
+
+### Yaxshilanganlar
+
+- `play_promote_release` bo'sh source track'da batafsil xato xabari:
+  - "Sabab va yechim" bo'limi
+  - Play Console URL'i (qaysi tracket bo'sh ekanini ko'rish uchun)
+  - `flutter-build` qayta urinish buyrug'i
+- `play_increase_rollout` shu pattern bilan — bo'sh production'da
+  `--promote-android` taklif qiladi
+- `play_list_track_releases` endi **edit ichida** o'qiydi — snapshot
+  consistency va `DELETE` orqali cleanup
+
+### Test natijalari
+
+4/4 unit test (build flow logic):
+- Eski `|| warn` pattern: bug isbotlandi (har doim suggest chaqirardi)
+- Yangi explicit flag: upload fail → suggest skip (to'g'ri)
+- Upload OK → suggest call (to'g'ri)
+- Production track → suggest skip (already prod, hech qaysiga ko'chirish kerak emas)
+
+### Sizning ssenariyga ta'sir
+
+Avval:
+```
+[Upload silently failed]
+⚠ Upload xato berdi
+[suggest_promotion auto-chaqirildi]
+"Hozir promote qilamizmi?" → y
+✗ internal track'da release topilmadi
+```
+
+Endi:
+```
+[Upload failed clearly]
+⚠ Upload xato berdi — AAB fayl saqlangan
+ℹ Promotion taklif qilinmaydi (chunki upload bo'lmadi)
+```
+
+Va agar siz qo'lda promote chaqirsangiz (yana xato bo'lsa):
+```
+✗ internal track'da release topilmadi
+
+ℹ Sabab va yechim:
+  • internal track hali bo'sh — avval AAB upload qilish kerak
+  • Yoki upload muvaffaqiyatsiz tugagan bo'lishi mumkin
+
+  → Buni sinab ko'ring:
+    $ flutter-build   # menu'da Play Store upload ni yoqib qayta urinib ko'ring
+
+  Tekshirish uchun Play Console'da ko'ring:
+    $ open 'https://play.google.com/console/.../tracks/internal'
+```
+
 ## [1.12.2] — 2026-05-21
 
 ### Tuzatildi — KRITIK: altool false positive (HTTP 4xx'da "Muvaffaqiyatli" deb ko'rsatardi)
@@ -767,6 +870,7 @@ yangi yo'lni oladi (3 loyiha → 1 ta fayl tahriri).
 - AAB va APK formatlari, Production va Debug rejimlari.
 - Build natijalarini Finder'da avtomatik ochish.
 
+[1.12.3]: https://github.com/Jaloliddin-Fozilov/flutter-build-tool/releases/tag/v1.12.3
 [1.12.2]: https://github.com/Jaloliddin-Fozilov/flutter-build-tool/releases/tag/v1.12.2
 [1.12.1]: https://github.com/Jaloliddin-Fozilov/flutter-build-tool/releases/tag/v1.12.1
 [1.12.0]: https://github.com/Jaloliddin-Fozilov/flutter-build-tool/releases/tag/v1.12.0

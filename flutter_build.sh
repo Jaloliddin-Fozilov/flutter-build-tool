@@ -22,7 +22,7 @@
 set -eo pipefail
 
 # ─── Skript ma'lumotlari ──────────────────────────────────
-SCRIPT_VERSION="1.12.2"
+SCRIPT_VERSION="1.12.3"
 SCRIPT_REPO="Jaloliddin-Fozilov/flutter-build-tool"
 SCRIPT_RAW_URL="https://raw.githubusercontent.com/${SCRIPT_REPO}/main/flutter_build.sh"
 
@@ -3841,15 +3841,37 @@ ensure_play_credentials() {
 
 # ─── v1.8.0: Track promotion va rollout boshqaruvi ─────
 
-# Track'dagi joriy release'larni olish. Natija: "versionCode versionName" qatorlar.
+# Track'dagi joriy release'larni olish. Natija: versionCode raqamlar (har qator).
+# v1.12.3: edit context ichida o'qiymiz — bu Google Play API'ning to'g'ri patterni.
+# Avval edit'siz GET ishlatardik, lekin u eventual consistency muammosiga duch
+# kelishi mumkin (yangi yuklangan release darrov ko'rinmasligi).
 play_list_track_releases() {
   local token="$1" package_name="$2" track="$3"
+  local api_base="https://androidpublisher.googleapis.com/androidpublisher/v3/applications/${package_name}"
+
+  # 1) Edit yaratish (read-only ishlatish uchun)
+  local edit_response edit_id
+  edit_response=$(curl -fsS -X POST "${api_base}/edits" \
+    -H "Authorization: Bearer ${token}" \
+    -H "Content-Type: application/json" \
+    -d '{}' 2>/dev/null) || return 1
+  edit_id=$(extract_json_field "$edit_response" "id")
+  [ -z "$edit_id" ] && return 1
+
+  # 2) Track holatini edit ichida o'qish (snapshot — ishonchli)
   local response
   response=$(curl -fsS \
-    "https://androidpublisher.googleapis.com/androidpublisher/v3/applications/${package_name}/tracks/${track}" \
+    "${api_base}/edits/${edit_id}/tracks/${track}" \
     -H "Authorization: Bearer ${token}" 2>/dev/null)
+
+  # 3) Edit'ni o'chirib tashlaymiz (o'zgartirish qilmadik — commit kerak emas)
+  #    Bu Play Console'da "dangling draft" qoldirmaslik uchun.
+  curl -fsS -X DELETE "${api_base}/edits/${edit_id}" \
+    -H "Authorization: Bearer ${token}" > /dev/null 2>&1 || true
+
   [ -z "$response" ] && return 1
-  # Faqat versionCodes ni chiqaramiz (oddiy parsing)
+
+  # versionCodes ni parse qilamiz
   printf '%s' "$response" | grep -oE '"versionCodes":[[:space:]]*\[[^]]+\]' | head -1 \
     | grep -oE '"[0-9]+"' | tr -d '"'
 }
@@ -3893,6 +3915,16 @@ play_promote_release() {
   version_codes=$(play_list_track_releases "$token" "$package_name" "$from_track")
   if [ -z "$version_codes" ]; then
     err "${from_track} track'da release topilmadi"
+    echo
+    info "${BOLD}Sabab va yechim:${NC}"
+    info "  • ${from_track} track hali bo'sh — avval AAB upload qilish kerak"
+    info "  • Yoki upload muvaffaqiyatsiz tugagan bo'lishi mumkin"
+    try_this \
+      "flutter-build   # menu'da Play Store upload ni yoqib qayta urinib ko'ring"
+    info ""
+    info "Tekshirish uchun Play Console'da ko'ring:"
+    try_this \
+      "open 'https://play.google.com/console/u/0/developers/-/app/${package_name}/tracks/${from_track}'"
     return 1
   fi
   # Bir nechta versionCode bo'lsa, eng kattasini olamiz
@@ -4013,6 +4045,10 @@ play_increase_rollout() {
   version_codes=$(play_list_track_releases "$token" "$package_name" "production")
   if [ -z "$version_codes" ]; then
     err "Production track'da release topilmadi"
+    info "Rollout oshirish uchun avval production'ga release bo'lishi kerak"
+    try_this \
+      "flutter-build --promote-android internal production   # internal'dan promote" \
+      "# yoki Play Console'da qo'lda upload"
     return 1
   fi
   local latest_vc
@@ -4844,10 +4880,17 @@ if $DO_PLAYSTORE_UPLOAD; then
     ok "Rollout: $(awk "BEGIN{printf \"%.0f\", $STAGED_ROLLOUT_FRACTION * 100}")%"
   fi
 
-  upload_to_play_store "$aab_file" || warn "Upload xato berdi — AAB fayl saqlangan: $aab_file"
+  # v1.12.3: faqat muvaffaqiyatli upload'dan keyin promote taklif qilamiz.
+  # Avval `|| warn ...` ishlatardik — bu promotion'ni hatto upload xato bo'lganda
+  # ham chaqirardi va user "internal track'da release topilmadi" xatosini olardi.
+  local play_upload_ok=true
+  upload_to_play_store "$aab_file" || {
+    warn "Upload xato berdi — AAB fayl saqlangan: $aab_file"
+    info "Promotion taklif qilinmaydi (chunki upload bo'lmadi)"
+    play_upload_ok=false
+  }
 
-  # Post-upload: per-project promotion_flow ga binoan keyingi qadam taklif qilish
-  if [ "$current_track" != "production" ]; then
+  if $play_upload_ok && [ "$current_track" != "production" ]; then
     play_suggest_promotion "$current_pkg_for_upload" "$current_track"
   fi
 fi
