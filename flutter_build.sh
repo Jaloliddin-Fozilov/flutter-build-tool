@@ -22,7 +22,7 @@
 set -eo pipefail
 
 # ─── Skript ma'lumotlari ──────────────────────────────────
-SCRIPT_VERSION="1.12.5"
+SCRIPT_VERSION="1.12.6"
 SCRIPT_REPO="Jaloliddin-Fozilov/flutter-build-tool"
 SCRIPT_RAW_URL="https://raw.githubusercontent.com/${SCRIPT_REPO}/main/flutter_build.sh"
 
@@ -81,6 +81,79 @@ try_this_install() {
     shift 2
   done
   echo
+}
+
+# v1.12.6: ishchi keytool'ni topish — PATH va boshqa keng tarqalgan joylar
+# Foydalanuvchi PATH'da Java o'rnatmagan bo'lsa ham, Android Studio ichidagi
+# JBR yoki boshqa o'rnatilgan JDK ishlatilishi mumkin.
+#
+# Returns:
+#   0 + stdout: keytool fayl yo'li (full path yoki shunchaki "keytool")
+#   1: hech qaerda topilmadi
+find_keytool() {
+  # 1) PATH'dagi keytool — lekin ishlay olishiga ishonch hosil qilish
+  #    (macOS stub bug: /usr/bin/keytool mavjud lekin Java yo'q)
+  # FIX: 'grep -qv' bug'i — stub xabarida bo'sh qator bor, -v keeps it -> false positive
+  # To'g'ri yondashuv: 'grep -qE' + ! negation (pattern TOPILMASA, java sog'lom)
+  if command -v keytool > /dev/null 2>&1; then
+    if ! java -version 2>&1 | grep -qE "Unable to locate a Java Runtime|No Java runtime|visit http"; then
+      printf '%s\n' "keytool"
+      return 0
+    fi
+  fi
+
+  # 2) macOS: /usr/libexec/java_home — Apple'ning rasmiy JDK locator
+  #    Ro'yxatda bo'lgan har qanday JDK (Oracle, Adoptium, Zulu, Android Studio JBR) topiladi
+  if [ -x "/usr/libexec/java_home" ]; then
+    local jh
+    jh=$(/usr/libexec/java_home 2>/dev/null)
+    if [ -n "$jh" ] && [ -x "$jh/bin/keytool" ]; then
+      printf '%s\n' "$jh/bin/keytool"
+      return 0
+    fi
+  fi
+
+  # 3) Keng tarqalgan joylar (glob bilan)
+  local path
+  for path in \
+    "/Applications/Android Studio.app/Contents/jbr/Contents/Home/bin/keytool" \
+    "/Applications/Android Studio.app/Contents/jre/Contents/Home/bin/keytool" \
+    "/Applications/Android Studio.app/Contents/jre/jdk/Contents/Home/bin/keytool" \
+    "/Applications/Android Studio Preview.app/Contents/jbr/Contents/Home/bin/keytool" \
+    "$HOME/Applications/Android Studio.app/Contents/jbr/Contents/Home/bin/keytool" \
+    /Library/Java/JavaVirtualMachines/*/Contents/Home/bin/keytool \
+    "$HOME/Library/Java/JavaVirtualMachines"/*/Contents/Home/bin/keytool \
+    /opt/homebrew/opt/openjdk*/bin/keytool \
+    /opt/homebrew/opt/openjdk@*/bin/keytool \
+    /opt/homebrew/opt/zulu*/bin/keytool \
+    /opt/homebrew/opt/temurin*/bin/keytool \
+    /opt/homebrew/Cellar/openjdk/*/bin/keytool \
+    /usr/local/opt/openjdk*/bin/keytool \
+    /usr/local/Cellar/openjdk/*/bin/keytool \
+    "$HOME/.sdkman/candidates/java/current/bin/keytool" \
+    "$HOME/.jenv/versions"/*/bin/keytool \
+    /usr/lib/jvm/*/bin/keytool
+  do
+    # Glob expansion: agar pattern ham mavjud bo'lsa, har qatorda hamma fayllar
+    if [ -x "$path" ]; then
+      printf '%s\n' "$path"
+      return 0
+    fi
+  done
+
+  return 1
+}
+
+# JAVA_HOME ni keytool yo'lidan derive qilib export qilish (sibling tools uchun)
+# keytool yo'li: /path/to/jdk/bin/keytool  →  JAVA_HOME=/path/to/jdk
+export_java_home_from_keytool() {
+  local kt_path="$1"
+  [ "$kt_path" = "keytool" ] && return 0  # PATH version — JAVA_HOME sozlangan
+  local jdk_home
+  jdk_home=$(dirname "$(dirname "$kt_path")")
+  if [ -d "$jdk_home" ]; then
+    export JAVA_HOME="$jdk_home"
+  fi
 }
 
 # ─── Umumiy yordamchilar ──────────────────────────────────
@@ -309,23 +382,28 @@ run_diagnostics() {
     fails=$((fails + 1))
   fi
 
-  # v1.12.5: Java JDK haqiqatan ishlay olishini tekshirish (keystore yaratish uchun)
-  # macOS'da /usr/bin/keytool stub mavjud bo'lishi mumkin lekin JDK o'rnatilmagan
-  if command -v keytool > /dev/null 2>&1; then
-    local java_check
-    java_check=$(java -version 2>&1)
-    if echo "$java_check" | grep -qiE "Unable to locate a Java Runtime|No Java runtime|visit http"; then
-      err "Java JDK              o'rnatilmagan (keytool faqat macOS stub)"
-      info "       Android keystore yaratish ishlamaydi"
-      info "       O'rnatish: brew install --cask zulu@17"
-      fails=$((fails + 1))
-    else
-      local java_ver
+  # v1.12.6: ishchi keytool (PATH, Android Studio, Homebrew va boshqa joylar)
+  local kt_doctor_bin
+  kt_doctor_bin=$(find_keytool)
+  if [ -n "$kt_doctor_bin" ]; then
+    if [ "$kt_doctor_bin" = "keytool" ]; then
+      local java_check java_ver
+      java_check=$(java -version 2>&1)
       java_ver=$(echo "$java_check" | head -1 | sed 's/.*"\([^"]*\)".*/\1/')
-      ok "Java JDK              (${java_ver:-mavjud}, keystore yaratish ishlaydi)"
+      ok "Java JDK              (${java_ver:-mavjud}, PATH'da, keystore yaratish ishlaydi)"
+    else
+      # PATH'da yo'q, lekin boshqa joyda topildi
+      local jdk_dir
+      jdk_dir=$(dirname "$(dirname "$kt_doctor_bin")")
+      ok "Java JDK              (PATH'da yo'q, lekin topildi: $jdk_dir)"
+      info "       keystore yaratish ishlaydi (full path orqali)"
     fi
   else
-    info "keytool yo'q            (keystore yaratish uchun Java JDK kerak)"
+    err "Java JDK              hech qaerda topilmadi"
+    info "       Android keystore yaratish ishlamaydi"
+    info "       Tekshirilgan: PATH, java_home, Android Studio, Homebrew, SDKMan, jenv"
+    info "       O'rnatish: brew install --cask zulu@17"
+    fails=$((fails + 1))
   fi
 
   echo
@@ -1815,10 +1893,12 @@ show_key_properties() {
 
   ok "Keystore fayli mavjud: $sf"
 
-  # Keystoreni o'qib alias va expiry ni ko'rsatish
-  if command -v keytool > /dev/null 2>&1; then
+  # Keystoreni o'qib alias va expiry ni ko'rsatish (find_keytool ishlatamiz)
+  local kt_bin
+  kt_bin=$(find_keytool)
+  if [ -n "$kt_bin" ]; then
     local kt_out
-    kt_out=$(keytool -list -v -keystore "$sf" -alias "$al" -storepass "$sp" 2>&1) || {
+    kt_out=$("$kt_bin" -list -v -keystore "$sf" -alias "$al" -storepass "$sp" 2>&1) || {
       warn "Keystore o'qib bo'lmadi (parol yoki alias noto'g'ri bo'lishi mumkin)"
       return 1
     }
@@ -1865,36 +1945,42 @@ ensure_gitignore_for_keys() {
 
 # Yangi keystore yaratish (interaktiv, keytool orqali)
 create_new_keystore() {
-  # v1.12.5: pre-flight Java check — keytool stub mavjud bo'lishi mumkin
-  # (macOS'da /usr/bin/keytool — stub), lekin JDK haqiqatda o'rnatilmagan
-  if ! command -v keytool > /dev/null 2>&1; then
-    err "keytool topilmadi — Java JDK o'rnatilmagan"
-    try_this_install "Java JDK" \
-      "macOS (brew)" "brew install --cask zulu@17   # yoki: brew install openjdk@17" \
-      "macOS (rasmiy)" "open https://adoptium.net/temurin/releases/?package=jdk" \
-      "Linux"          "sudo apt install default-jdk   # yoki: sudo dnf install java-17-openjdk-devel"
-    info "O'rnatgandan keyin yangi terminal sessiya oching (PATH yangilanishi uchun)"
+  # v1.12.6: ishchi keytool'ni topish — PATH, java_home, Android Studio JBR,
+  # Homebrew, SDKMan, jenv va boshqa keng tarqalgan joylardan
+  local keytool_bin
+  keytool_bin=$(find_keytool)
+
+  if [ -z "$keytool_bin" ]; then
+    err "Ishchi keytool topilmadi"
+    echo
+    info "Quyidagi joylar tekshirildi:"
+    info "  • PATH (\`which keytool\`)"
+    info "  • macOS java_home (/usr/libexec/java_home)"
+    info "  • Android Studio (/Applications/Android Studio.app/Contents/jbr/)"
+    info "  • /Library/Java/JavaVirtualMachines/"
+    info "  • Homebrew (openjdk, zulu, temurin)"
+    info "  • SDKMan (~/.sdkman/candidates/java/)"
+    info "  • jenv (~/.jenv/versions/)"
+    echo
+    info "${BOLD}macOS bug:${NC} /usr/bin/keytool va /usr/bin/java mavjud bo'lishi mumkin,"
+    info "lekin bular Apple'ning 'Java o'rnating' stub'lari — haqiqiy JDK alohida kerak."
+    echo
+    try_this_install "Java JDK (haqiqiy)" \
+      "Android Studio (eng oson)" "open 'https://developer.android.com/studio'" \
+      "macOS (brew, tavsiya)"     "brew install --cask zulu@17" \
+      "macOS (Adoptium)"          "open 'https://adoptium.net/temurin/releases/?package=jdk'" \
+      "macOS (Oracle)"            "open 'https://www.oracle.com/java/technologies/downloads/'" \
+      "Linux (Debian/Ubuntu)"     "sudo apt install default-jdk" \
+      "Linux (Fedora/RHEL)"       "sudo dnf install java-17-openjdk-devel"
+    info "O'rnatgandan keyin tekshirish: ${BOLD}java -version${NC} (versiya raqami chiqishi kerak)"
     return 1
   fi
 
-  # Java haqiqatan ishlay olishini tekshirish (macOS keytool stub bug'ini topish)
-  local java_check
-  java_check=$(java -version 2>&1)
-  if echo "$java_check" | grep -qiE "Unable to locate a Java Runtime|No Java runtime|JRE.*not found|JAVA_HOME.*not set"; then
-    err "Java JDK haqiqatan o'rnatilmagan (faqat macOS stub mavjud)"
-    info "Tafsilot: ${java_check%%$'\n'*}"
-    echo
-    info "${BOLD}macOS bug:${NC} /usr/bin/keytool va /usr/bin/java mavjud, lekin bular faqat"
-    info "Apple'ning 'Java o'rnating' stub'lari — haqiqiy JDK alohida o'rnatilishi shart."
-    echo
-    try_this_install "Java JDK (haqiqiy)" \
-      "macOS (brew, tavsiya)" "brew install --cask zulu@17" \
-      "macOS (Adoptium)"      "open https://adoptium.net/temurin/releases/?package=jdk" \
-      "macOS (Oracle)"        "open https://www.oracle.com/java/technologies/downloads/" \
-      "Linux (Debian/Ubuntu)" "sudo apt install default-jdk" \
-      "Linux (Fedora/RHEL)"   "sudo dnf install java-17-openjdk-devel"
-    info "O'rnatgandan keyin tekshirish: ${BOLD}java -version${NC} (versiya raqami chiqishi kerak)"
-    return 1
+  # Topilgan keytool PATH'da bo'lmasa, foydalanuvchiga aytamiz
+  if [ "$keytool_bin" != "keytool" ]; then
+    info "Ishchi Java JDK topildi: ${BOLD}$(dirname "$(dirname "$keytool_bin")")${NC}"
+    info "(PATH'da Java yo'q, lekin shu yo'l orqali ishlaymiz)"
+    export_java_home_from_keytool "$keytool_bin"
   fi
 
   step "Yangi Android keystore yaratilmoqda"
@@ -1973,7 +2059,7 @@ create_new_keystore() {
   local keytool_log
   keytool_log=$(mktemp)
 
-  if keytool -genkeypair -v \
+  if "$keytool_bin" -genkeypair -v \
     -keystore "$kpath" \
     -keyalg RSA -keysize 2048 -validity 10000 \
     -alias "$al" \
@@ -2062,8 +2148,11 @@ link_existing_keystore() {
   read -s -p "    Key parol [keystore parol bilan bir xil]: " kp; echo
   kp="${kp:-$sp}"
 
-  if command -v keytool > /dev/null 2>&1; then
-    if ! keytool -list -keystore "$kpath" -alias "$al" -storepass "$sp" > /dev/null 2>&1; then
+  # find_keytool: PATH, Android Studio, Homebrew va boshqa joylar
+  local lk_bin
+  lk_bin=$(find_keytool)
+  if [ -n "$lk_bin" ]; then
+    if ! "$lk_bin" -list -keystore "$kpath" -alias "$al" -storepass "$sp" > /dev/null 2>&1; then
       err "Keystore o'qib bo'lmadi (parol yoki alias noto'g'ri)"
       return 1
     fi

@@ -5,6 +5,92 @@ Loyihaning barcha muhim o'zgarishlari shu faylga yoziladi.
 Format [Keep a Changelog](https://keepachangelog.com/uz/1.1.0/) asosida,
 versiyalash esa [Semantic Versioning](https://semver.org/lang/uz/) qoidasiga rioya qiladi.
 
+## [1.12.6] — 2026-06-02
+
+### Qo'shildi — Smart Java JDK discovery (Android Studio bilan keladi!)
+
+User savol: "boshqa qilish ham mumkin ediku nega o'xshamayapti" — Java JDK
+o'rnatish o'rniga, **mavjud Java'larni qidirib topish** kerak edi.
+
+Aksariyat Flutter dasturchilari **Android Studio**'ni o'rnatadi (kerak),
+va u o'zining **JBR (JetBrains Runtime)** bilan keladi. Bu JDK PATH'da
+bo'lmasligi mumkin, lekin **ishlatishga to'liq tayyor**.
+
+### Yangi `find_keytool` funksiyasi
+
+7 ta keng tarqalgan joydan qidiradi (prioritet bo'yicha):
+
+1. **PATH** (`command -v keytool`) — agar Java haqiqatan ishlasa
+2. **macOS java_home** (`/usr/libexec/java_home`) — Apple'ning rasmiy locator
+3. **Android Studio JBR**:
+   - `/Applications/Android Studio.app/Contents/jbr/Contents/Home/bin/keytool`
+   - `/Applications/Android Studio.app/Contents/jre/Contents/Home/bin/keytool`
+   - User-installed va Preview versiyalar
+4. **`/Library/Java/JavaVirtualMachines/`** — rasmiy o'rnatilgan JDK'lar
+5. **Homebrew**: `/opt/homebrew/opt/{openjdk,zulu,temurin}*` va Cellar
+6. **SDKMan**: `~/.sdkman/candidates/java/current/`
+7. **jenv**: `~/.jenv/versions/*/`
+8. **Linux**: `/usr/lib/jvm/*/`
+
+Topilgach, **full path orqali** chaqiradi — PATH'da bo'lishi kerak emas.
+
+### Tuzatildi — `grep -qv` bug
+
+Avval `if java -version | grep -qvE PATTERN; then` ishlatardik (invert match).
+Lekin stub xabarda **bo'sh qator** bor (3 qator: matn, matn, bo'sh) va
+`grep -v` bo'sh qator'ni keep qiladi → exit 0 → false positive.
+
+**Fix**: `if ! java -version | grep -qE PATTERN; then` — pattern TOPILMASA,
+Java sog'lom. Bu **classic grep gotcha**.
+
+### Yaxshilanganlar
+
+- **`create_new_keystore`** endi `find_keytool` ishlatadi va topilgan
+  full path bilan chaqiradi. PATH'da Java yo'q bo'lsa, foydalanuvchiga
+  aytadi: "Ishchi Java JDK topildi: /Applications/Android Studio.app/...".
+- **`link_existing_keystore` va `show_key_properties`** ham `find_keytool`
+  ishlatadi.
+- **`--doctor`** endi qaerda Java topilganini ko'rsatadi:
+  ```
+  ✓ Java JDK              (PATH'da yo'q, lekin topildi: /Applications/Android Studio.app/Contents/jbr/Contents/Home)
+        keystore yaratish ishlaydi (full path orqali)
+  ```
+- **`export_java_home_from_keytool`** helper — keytool full path'idan
+  `JAVA_HOME`'ni derive qilib export qiladi (sibling tools uchun).
+- **Install menyuga "Android Studio (eng oson)" qo'shildi** — agar
+  foydalanuvchi hech narsa o'rnatmagan bo'lsa, eng tavsiya etiladigan
+  variant.
+
+### Sizning Mac'da test
+
+User'ning Mac'da sinov:
+```
+✓ TOPILDI: /Applications/Android Studio.app/Contents/jbr/Contents/Home/bin/keytool
+  Bu PATH'da bo'lmagan Java JDK, lekin ishchi
+```
+
+Demak v1.12.6 dan keyin user'ga **Java alohida o'rnatish shart emas** —
+Android Studio'sining JBR ishlatiladi.
+
+### Test natijalari
+
+4/4 unit test:
+- Stub xabari pattern detection
+- `!` negation logikasi (stub muhitda PATH qaytarilmaydi)
+- Real Java muhit (PATH version qaytariladi)
+- User'ning Mac'da real `find_keytool` test (Android Studio JBR topildi)
+
+### Texnik tafsilot
+
+**Existence vs functionality**: `command -v X` faqat fayl mavjudligini
+tekshiradi. **Functional test** uchun tool'ni real chaqirish kerak
+(`java -version`). Bu **defensive programming** — fayl bor degan
+ishonchga emas, **harakatga** ishonish.
+
+**PATH-independent execution**: full path bilan binary chaqirsak
+(`/path/to/keytool` o'rniga `keytool`), PATH'ga bog'liq emas. JAVA_HOME'ni
+export qilsak, qo'shimcha dependencies ham topiladi.
+
 ## [1.12.5] — 2026-06-02
 
 ### Tuzatildi — macOS Java stub bug + UX yaxshilash
@@ -1063,6 +1149,7 @@ yangi yo'lni oladi (3 loyiha → 1 ta fayl tahriri).
 - AAB va APK formatlari, Production va Debug rejimlari.
 - Build natijalarini Finder'da avtomatik ochish.
 
+[1.12.6]: https://github.com/Jaloliddin-Fozilov/flutter-build-tool/releases/tag/v1.12.6
 [1.12.5]: https://github.com/Jaloliddin-Fozilov/flutter-build-tool/releases/tag/v1.12.5
 [1.12.4]: https://github.com/Jaloliddin-Fozilov/flutter-build-tool/releases/tag/v1.12.4
 [1.12.3]: https://github.com/Jaloliddin-Fozilov/flutter-build-tool/releases/tag/v1.12.3
