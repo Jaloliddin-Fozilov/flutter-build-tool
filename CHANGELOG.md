@@ -5,6 +5,76 @@ Loyihaning barcha muhim o'zgarishlari shu faylga yoziladi.
 Format [Keep a Changelog](https://keepachangelog.com/uz/1.1.0/) asosida,
 versiyalash esa [Semantic Versioning](https://semver.org/lang/uz/) qoidasiga rioya qiladi.
 
+## [1.12.7] — 2026-06-02
+
+### Qo'shildi — Java JDK avtomatik o'rnatish (`brew` orqali)
+
+User savol: "o'rnatilmagan bo'lsa o'zi o'rnatsin" — Java topilmasa, qo'lda
+buyruq ko'chirish o'rniga, skript **o'zi `brew install` chaqirsin**.
+
+### Yangi `offer_jdk_auto_install` funksiyasi
+
+`find_keytool` muvaffaqiyatsiz bo'lsa (Java hech qaerda topilmasa), foydalanuvchi
+ekraniga quyidagicha ko'rinadi:
+
+```
+⚠ Java JDK hech qaerda topilmadi
+ℹ Homebrew bilan avtomatik o'rnatishim mumkin:
+ℹ   Buyruq: brew install --cask zulu@17
+ℹ   Distribution: Zulu OpenJDK 17 (Azul, bepul, license cheklovsiz)
+ℹ   Hajmi:  ~200MB, internet'da 30-60 sekund
+ℹ   Joyi:   /Library/Java/JavaVirtualMachines/zulu-17.jdk/
+
+  Hozir avtomatik o'rnataylikmi? (y/n) [y]: ↵
+▶ Zulu JDK 17 o'rnatilmoqda (brew)...
+[brew output ko'rinadi, ~30-60 sekund]
+✓ Java JDK muvaffaqiyatli o'rnatildi!
+✓ Yangi keytool topildi: /Library/Java/JavaVirtualMachines/zulu-17.jdk/Contents/Home/bin/keytool
+```
+
+So'ngra `create_new_keystore` davom etadi — foydalanuvchi keystore yaratadi.
+**Zero copy-paste**.
+
+### Texnik tafsilot
+
+- **Faqat macOS** (uname == Darwin) — Linux'da sudo kerak bo'lgani uchun
+- **Faqat agar `brew` bor bo'lsa** — yo'q bo'lsa, Homebrew install link beradi
+- **Zulu @17** tanlandi:
+  - **Bepul** (Oracle JDK'da licence cheklovlari bor)
+  - **Azul** (yirik OpenJDK distributor, ishonchli)
+  - **17 LTS** — long-term support, Flutter/Android bilan to'liq mos
+  - **`--cask` orqali** — `/Library/Java/JavaVirtualMachines/` ga o'rnatadi
+  - **`java_home` avtomatik topadi** — qo'shimcha PATH/symlink sozlash shart emas
+- **Retry-after-install**: brew tugagach, `find_keytool` qayta chaqiriladi
+- **Real-time output**: brew'ning progress'i ko'rinadi (sukut emas)
+
+### Yaxshilanganlar
+
+`create_new_keystore` endi 3 bosqichli pipeline:
+  1. `find_keytool` — mavjud Java'larni qidirish (7 ta joy)
+  2. `offer_jdk_auto_install` — agar yo'q bo'lsa, **avtomatik install**
+  3. Manual install instructions — agar 1 va 2 muvaffaqiyatsiz bo'lsa
+
+### Foydalanuvchi tajribasi taqqoslash
+
+| Versiya | Java topilmasa |
+|---------|----------------|
+| v1.12.5 | Manual instructions: copy-paste 6 ta buyruq |
+| v1.12.6 | Android Studio JBR avtomatik topiladi (agar bo'lsa); aks holda manual |
+| **v1.12.7** | **Android Studio JBR + brew avtomatik install (1 ta `y` bosish)** |
+
+### Auto-install opsiyasini o'tkazib yuborish
+
+`n` bossangiz yoki `Ctrl-C` qilsangiz, manual install instructions ko'rsatiladi.
+Bu **opt-in workflow** — sizning ruxsatingizsiz hech narsa o'rnatilmaydi.
+
+### Test natijalari
+
+3/3 unit test:
+- ✓ `find_keytool` Android Studio JBR'ni topadi
+- ✓ `offer_jdk_auto_install` `n` javobini boshqaradi (graceful)
+- ✓ `brew` auto-discovery ishlaydi
+
 ## [1.12.6] — 2026-06-02
 
 ### Qo'shildi — Smart Java JDK discovery (Android Studio bilan keladi!)
@@ -1149,6 +1219,7 @@ yangi yo'lni oladi (3 loyiha → 1 ta fayl tahriri).
 - AAB va APK formatlari, Production va Debug rejimlari.
 - Build natijalarini Finder'da avtomatik ochish.
 
+[1.12.7]: https://github.com/Jaloliddin-Fozilov/flutter-build-tool/releases/tag/v1.12.7
 [1.12.6]: https://github.com/Jaloliddin-Fozilov/flutter-build-tool/releases/tag/v1.12.6
 [1.12.5]: https://github.com/Jaloliddin-Fozilov/flutter-build-tool/releases/tag/v1.12.5
 [1.12.4]: https://github.com/Jaloliddin-Fozilov/flutter-build-tool/releases/tag/v1.12.4

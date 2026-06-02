@@ -22,7 +22,7 @@
 set -eo pipefail
 
 # ─── Skript ma'lumotlari ──────────────────────────────────
-SCRIPT_VERSION="1.12.6"
+SCRIPT_VERSION="1.12.7"
 SCRIPT_REPO="Jaloliddin-Fozilov/flutter-build-tool"
 SCRIPT_RAW_URL="https://raw.githubusercontent.com/${SCRIPT_REPO}/main/flutter_build.sh"
 
@@ -153,6 +153,76 @@ export_java_home_from_keytool() {
   jdk_home=$(dirname "$(dirname "$kt_path")")
   if [ -d "$jdk_home" ]; then
     export JAVA_HOME="$jdk_home"
+  fi
+}
+
+# v1.12.7: Java JDK ni avtomatik o'rnatish (macOS via Homebrew cask)
+# Foydalanuvchidan tasdiqlash so'raydi va brew install --cask zulu@17 chaqiradi.
+#
+# Returns:
+#   0 + stdout: yangi keytool yo'li (find_keytool natijasi)
+#   1: install qilinmadi/xato berdi
+offer_jdk_auto_install() {
+  if [ "$(uname)" != "Darwin" ]; then
+    info "Avtomatik install hozir faqat macOS uchun (brew orqali)" >&2
+    info "Linux foydalanuvchilari uchun: sudo apt install default-jdk" >&2
+    return 1
+  fi
+  if ! command -v brew > /dev/null 2>&1; then
+    warn "Homebrew topilmadi — avtomatik install qila olmayman" >&2
+    info "Avval Homebrew o'rnating, keyin qayta urinib ko'ring:" >&2
+    info "  ${BOLD}/bin/bash -c \"\$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)\"${NC}" >&2
+    return 1
+  fi
+
+  echo >&2
+  warn "Java JDK hech qaerda topilmadi" >&2
+  info "Homebrew bilan avtomatik o'rnatishim mumkin:" >&2
+  info "  Buyruq: ${BOLD}brew install --cask zulu@17${NC}" >&2
+  info "  Distribution: Zulu OpenJDK 17 (Azul, bepul, license cheklovsiz)" >&2
+  info "  Hajmi:  ~200MB, internet'da 30-60 sekund" >&2
+  info "  Joyi:   /Library/Java/JavaVirtualMachines/zulu-17.jdk/" >&2
+  info "  Kelajak: keystore yaratish, signing va boshqalar uchun avtomatik topiladi" >&2
+  echo >&2
+
+  local yn
+  read -p "  Hozir avtomatik o'rnataylikmi? (y/n) [y]: " yn
+  if [[ "$yn" =~ ^[Nn]$ ]]; then
+    info "Bekor qilindi — qo'lda o'rnatib qayta urinib ko'ring" >&2
+    return 1
+  fi
+
+  echo >&2
+  step "Zulu JDK 17 o'rnatilmoqda (brew)..." >&2
+  info "(brew'ning chiqishi pastda ko'rinadi, 30-60 sekund kuting)" >&2
+  echo >&2
+
+  # brew install — real-time output ko'rsatamiz (foydalanuvchi jarayonni kuzatadi)
+  if brew install --cask zulu@17; then
+    echo >&2
+    ok "Java JDK muvaffaqiyatli o'rnatildi!" >&2
+
+    # find_keytool ni qayta chaqirish (yangi JDK java_home orqali topilishi kerak)
+    local new_keytool
+    new_keytool=$(find_keytool)
+    if [ -n "$new_keytool" ]; then
+      ok "Yangi keytool topildi: ${BOLD}${new_keytool}${NC}" >&2
+      printf '%s\n' "$new_keytool"
+      return 0
+    fi
+
+    # Bu kam ehtimol — brew install muvaffaqiyatli, lekin find_keytool topmadi
+    warn "Java o'rnatildi, lekin keytool darrov topilmadi" >&2
+    info "PATH yangilanishi uchun yangi terminal sessiya oching" >&2
+    info "Keyin qaytadan urinib ko'ring: flutter-build" >&2
+    return 1
+  else
+    echo >&2
+    err "Brew install xato berdi" >&2
+    info "Yuqorida xato xabarini ko'ring (network, license, va h.k.)" >&2
+    info "Qo'lda urinib ko'ring:" >&2
+    try_this "brew install --cask zulu@17"
+    return 1
   fi
 }
 
@@ -1949,6 +2019,13 @@ create_new_keystore() {
   # Homebrew, SDKMan, jenv va boshqa keng tarqalgan joylardan
   local keytool_bin
   keytool_bin=$(find_keytool)
+
+  # v1.12.7: agar topilmasa, AVTOMATIK install taklif qilamiz (brew via macOS)
+  # Foydalanuvchi yes desa, biz brew install --cask zulu@17 chaqiramiz va
+  # keyin find_keytool'ni qayta chaqiramiz. Bu manual install'dan oldin.
+  if [ -z "$keytool_bin" ]; then
+    keytool_bin=$(offer_jdk_auto_install)
+  fi
 
   if [ -z "$keytool_bin" ]; then
     err "Ishchi keytool topilmadi"
