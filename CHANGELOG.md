@@ -5,6 +5,96 @@ Loyihaning barcha muhim o'zgarishlari shu faylga yoziladi.
 Format [Keep a Changelog](https://keepachangelog.com/uz/1.1.0/) asosida,
 versiyalash esa [Semantic Versioning](https://semver.org/lang/uz/) qoidasiga rioya qiladi.
 
+## [1.12.4] — 2026-06-02
+
+### Tuzatildi — Keystore yaratish silent failure
+
+User real bug: "Keystore yaratishda xatolik" — sabab ko'rinmas edi.
+
+Bizning kod `keytool` chiqishini `> /dev/null 2>&1` bilan to'liq yashirib
+qo'ygan edi. Foydalanuvchi (va biz) keytool aslida nima xato berganini
+bilmaymiz — faqat "xatolik" ko'rinardi.
+
+### Fix: capture-then-show + pattern detection
+
+`keytool` output endi `mktemp` faylga yoziladi:
+- **Success holatda**: chiqish ko'rsatilmaydi (shovqin yo'q)
+- **Failure holatda**: to'liq keytool xato xabari ko'rsatiladi va pattern
+  asosida maxsus tushuntirish beriladi:
+  - **Password < 6 belgi** → "kamida 6 belgi" tushunchasi
+  - **Invalid name (RFC2253)** → "vergul/qo'shtirnoq ishlatmang"
+  - **Permission denied** → `chmod`/`ls -la` tavsiyasi
+  - **JKS proprietary warning** → "bu xato emas, fayl tekshiring"
+  - **JAVA_HOME / unknown command** → JDK diagnostika
+  - **Boshqa** → generic recovery hints
+
+### Yaxshilanganlar
+
+- **`keytool` topilmasa**: endi `try_this_install` bilan platform-specific
+  install buyrug'i ko'rsatiladi:
+  - macOS (brew): `brew install --cask zulu@17`
+  - macOS (rasmiy): Adoptium Temurin URL
+  - Linux: `sudo apt install default-jdk`
+- **`mkdir -p` xato bo'lsa**: aniq xato xabari + recovery (avval bu silent
+  fail edi — papka yaratilmasa keytool keyinroq "FileNotFoundException" berardi)
+- **JKS deprecation false positive**: JDK 17+ "JKS uses proprietary format"
+  warning beradi, lekin **fayl yaratiladi**. Bizning kod buni xato deb
+  noto'g'ri talqin qilmaslik uchun specific detection bor.
+
+### Texnik tafsilot
+
+`capture-then-show` patterni — `cmd > "$logfile" 2>&1` bilan **avval
+fayl'ga yozish**, keyin **faqat failure holatda foydalanuvchiga ko'rsatish**.
+Bu **silent on success, verbose on failure** patterni — Unix tool'lari
+falsafasiga mos.
+
+Pattern dispatcher (5 ta error class):
+- `password.*must be at least|too short` → password length
+- `invalid.*name|illegal.*char|RFC2253` → DN syntax
+- `permission denied|access denied|cannot write` → fs permissions
+- `JKS keystore uses a proprietary format|migrate to PKCS12` → JDK17 warning
+- `unknown.*command|JAVA_HOME` → JDK installation
+
+### Foydalanuvchi nuqtai nazaridan
+
+Avval:
+```
+✗ Keystore yaratishda xatolik
+✗ Keystore yaratilmadi
+```
+
+Endi (masalan, password qisqa bo'lsa):
+```
+✗ Keystore yaratishda xatolik (keytool exit code: 1)
+
+⚠ keytool xato xabari:
+    keytool error: java.lang.IllegalArgumentException: Keystore password
+    must be at least 6 characters
+
+ℹ Sabab: parol qisqa (Java majburiy 6 belgi)
+  → Qayta urinib, kamida 6 belgili parol kiriting
+```
+
+Endi (DN xato bo'lsa):
+```
+✗ Keystore yaratishda xatolik
+
+⚠ keytool xato xabari:
+    keytool error: java.io.IOException: Invalid name: ...
+
+ℹ Sabab: sertifikat ma'lumotlarida noto'g'ri belgi (vergul, qo'shtirnoq, \)
+  ℹ Faqat oddiy harflar va probel ishlatish tavsiya etiladi
+```
+
+### Test natijalari
+
+5/5 unit test:
+- Short password pattern detection
+- Invalid DN pattern detection
+- Permission denied pattern detection
+- JKS deprecation warning detection (false positive guard)
+- Generic error → fallback recovery
+
 ## [1.12.3] — 2026-05-21
 
 ### Tuzatildi — Play Store: promotion upload fail bo'lganda chaqirilmasin + edit context bug
@@ -870,6 +960,7 @@ yangi yo'lni oladi (3 loyiha → 1 ta fayl tahriri).
 - AAB va APK formatlari, Production va Debug rejimlari.
 - Build natijalarini Finder'da avtomatik ochish.
 
+[1.12.4]: https://github.com/Jaloliddin-Fozilov/flutter-build-tool/releases/tag/v1.12.4
 [1.12.3]: https://github.com/Jaloliddin-Fozilov/flutter-build-tool/releases/tag/v1.12.3
 [1.12.2]: https://github.com/Jaloliddin-Fozilov/flutter-build-tool/releases/tag/v1.12.2
 [1.12.1]: https://github.com/Jaloliddin-Fozilov/flutter-build-tool/releases/tag/v1.12.1

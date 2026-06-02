@@ -22,7 +22,7 @@
 set -eo pipefail
 
 # ─── Skript ma'lumotlari ──────────────────────────────────
-SCRIPT_VERSION="1.12.3"
+SCRIPT_VERSION="1.12.4"
 SCRIPT_REPO="Jaloliddin-Fozilov/flutter-build-tool"
 SCRIPT_RAW_URL="https://raw.githubusercontent.com/${SCRIPT_REPO}/main/flutter_build.sh"
 
@@ -1847,7 +1847,12 @@ ensure_gitignore_for_keys() {
 # Yangi keystore yaratish (interaktiv, keytool orqali)
 create_new_keystore() {
   if ! command -v keytool > /dev/null 2>&1; then
-    err "keytool topilmadi (Java JDK o'rnatilganligini tekshiring)"
+    err "keytool topilmadi — Java JDK o'rnatilmagan"
+    try_this_install "Java JDK" \
+      "macOS (brew)" "brew install --cask zulu@17   # yoki: brew install openjdk@17" \
+      "macOS (rasmiy)" "open https://adoptium.net/temurin/releases/?package=jdk" \
+      "Linux"          "sudo apt install default-jdk   # yoki: sudo dnf install java-17-openjdk-devel"
+    info "O'rnatgandan keyin yangi terminal sessiya oching (PATH yangilanishi uchun)"
     return 1
   fi
 
@@ -1873,7 +1878,15 @@ create_new_keystore() {
     ok "Eski keystore backup qilindi: $backup_path"
   fi
 
-  mkdir -p "$kdir"
+  # mkdir -p — papka yaratish (yozish ruxsati bo'lmasa explicit xato)
+  if ! mkdir -p "$kdir" 2>/dev/null; then
+    err "Keystore papkasini yaratib bo'lmadi: $kdir"
+    info "Sabab: yozish ruxsati yo'q yoki yo'l noto'g'ri"
+    try_this \
+      "ls -la \"$(dirname "$kdir" 2>/dev/null || echo "$HOME")\"   # papka holatini ko'rish" \
+      "mkdir -p \"$kdir\"                                          # qo'lda urinib ko'rish"
+    return 1
+  fi
 
   local al sp sp2 kp
   read -p "    Key alias [upload]: " al
@@ -1908,16 +1921,65 @@ create_new_keystore() {
   local dname="CN=${cn:-Unknown}, O=${org:-Unknown}, L=${loc:-Unknown}, C=${cc}"
 
   step "Keystore yaratilmoqda..."
+
+  # v1.12.4: keytool output'ni capture qilamiz — fail bo'lsa foydalanuvchiga ko'rsatamiz
+  local keytool_log
+  keytool_log=$(mktemp)
+
   if keytool -genkeypair -v \
     -keystore "$kpath" \
     -keyalg RSA -keysize 2048 -validity 10000 \
     -alias "$al" \
     -storepass "$sp" \
     -keypass "$kp" \
-    -dname "$dname" > /dev/null 2>&1; then
+    -dname "$dname" > "$keytool_log" 2>&1; then
     ok "Keystore yaratildi: $kpath"
+    rm -f "$keytool_log"
   else
-    err "Keystore yaratishda xatolik"
+    local rc=$?
+    err "Keystore yaratishda xatolik (keytool exit code: $rc)"
+    echo
+    warn "${BOLD}keytool xato xabari:${NC}"
+    sed 's/^/    /' "$keytool_log"
+    echo
+
+    # Specific error patterns
+    local kt_out
+    kt_out=$(cat "$keytool_log")
+    rm -f "$keytool_log"
+
+    if echo "$kt_out" | grep -qiE "keystore password|password.*must be at least|too short"; then
+      info "${BOLD}Sabab:${NC} parol qisqa (Java majburiy 6 belgi)"
+      try_this "Qayta urinib, kamida 6 belgili parol kiriting"
+    elif echo "$kt_out" | grep -qiE "invalid.*name|illegal.*char|RFC2253"; then
+      info "${BOLD}Sabab:${NC} sertifikat ma'lumotlarida noto'g'ri belgi (vergul, qo'shtirnoq, \\)"
+      info "Faqat oddiy harflar va probel ishlatish tavsiya etiladi"
+      try_this "Qayta urinib, CN/O/L'da maxsus belgilar yoki vergullar ishlatmang"
+    elif echo "$kt_out" | grep -qiE "permission denied|access denied|cannot write|read-only"; then
+      info "${BOLD}Sabab:${NC} fayl yoki papka yozish ruxsati yo'q"
+      try_this \
+        "ls -la \"$(dirname "$kpath")\"   # ruxsatlarni ko'rish" \
+        "chmod u+w \"$(dirname "$kpath")\" # yozish ruxsati berish"
+    elif echo "$kt_out" | grep -qiE "JKS keystore uses a proprietary format|migrate to PKCS12"; then
+      info "${BOLD}Sabab:${NC} JDK 17+ JKS o'rniga PKCS12 talab qiladi"
+      info "Bu ogohlantirish, lekin xato emas — keystore yaratilgan bo'lishi mumkin"
+      try_this "ls -la \"$kpath\"   # fayl bormi tekshirish"
+    elif echo "$kt_out" | grep -qiE "unknown.*command|unrecognized|JAVA_HOME"; then
+      info "${BOLD}Sabab:${NC} JDK noto'g'ri o'rnatilgan yoki JAVA_HOME muammosi"
+      try_this \
+        "java -version    # Java versiyasini ko'rish" \
+        "which keytool    # keytool yo'lini ko'rish" \
+        "echo \$JAVA_HOME  # JAVA_HOME tekshirish"
+    else
+      info "Eng keng tarqalgan sabablar:"
+      info "  • Parol kamida 6 belgi bo'lishi kerak"
+      info "  • Sertifikat ma'lumotlarida noto'g'ri belgi (vergul, qo'shtirnoq)"
+      info "  • Papka yozish ruxsati yo'q"
+      info "  • JDK noto'g'ri o'rnatilgan"
+      try_this \
+        "java -version" \
+        "keytool -help"
+    fi
     return 1
   fi
 
