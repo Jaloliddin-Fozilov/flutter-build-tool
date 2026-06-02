@@ -22,7 +22,7 @@
 set -eo pipefail
 
 # ─── Skript ma'lumotlari ──────────────────────────────────
-SCRIPT_VERSION="1.12.4"
+SCRIPT_VERSION="1.12.5"
 SCRIPT_REPO="Jaloliddin-Fozilov/flutter-build-tool"
 SCRIPT_RAW_URL="https://raw.githubusercontent.com/${SCRIPT_REPO}/main/flutter_build.sh"
 
@@ -307,6 +307,25 @@ run_diagnostics() {
     err "openssl                 topilmadi"
     info "       Play Store upload uchun JWT signing ishlamaydi"
     fails=$((fails + 1))
+  fi
+
+  # v1.12.5: Java JDK haqiqatan ishlay olishini tekshirish (keystore yaratish uchun)
+  # macOS'da /usr/bin/keytool stub mavjud bo'lishi mumkin lekin JDK o'rnatilmagan
+  if command -v keytool > /dev/null 2>&1; then
+    local java_check
+    java_check=$(java -version 2>&1)
+    if echo "$java_check" | grep -qiE "Unable to locate a Java Runtime|No Java runtime|visit http"; then
+      err "Java JDK              o'rnatilmagan (keytool faqat macOS stub)"
+      info "       Android keystore yaratish ishlamaydi"
+      info "       O'rnatish: brew install --cask zulu@17"
+      fails=$((fails + 1))
+    else
+      local java_ver
+      java_ver=$(echo "$java_check" | head -1 | sed 's/.*"\([^"]*\)".*/\1/')
+      ok "Java JDK              (${java_ver:-mavjud}, keystore yaratish ishlaydi)"
+    fi
+  else
+    info "keytool yo'q            (keystore yaratish uchun Java JDK kerak)"
   fi
 
   echo
@@ -1846,6 +1865,8 @@ ensure_gitignore_for_keys() {
 
 # Yangi keystore yaratish (interaktiv, keytool orqali)
 create_new_keystore() {
+  # v1.12.5: pre-flight Java check — keytool stub mavjud bo'lishi mumkin
+  # (macOS'da /usr/bin/keytool — stub), lekin JDK haqiqatda o'rnatilmagan
   if ! command -v keytool > /dev/null 2>&1; then
     err "keytool topilmadi — Java JDK o'rnatilmagan"
     try_this_install "Java JDK" \
@@ -1856,10 +1877,34 @@ create_new_keystore() {
     return 1
   fi
 
+  # Java haqiqatan ishlay olishini tekshirish (macOS keytool stub bug'ini topish)
+  local java_check
+  java_check=$(java -version 2>&1)
+  if echo "$java_check" | grep -qiE "Unable to locate a Java Runtime|No Java runtime|JRE.*not found|JAVA_HOME.*not set"; then
+    err "Java JDK haqiqatan o'rnatilmagan (faqat macOS stub mavjud)"
+    info "Tafsilot: ${java_check%%$'\n'*}"
+    echo
+    info "${BOLD}macOS bug:${NC} /usr/bin/keytool va /usr/bin/java mavjud, lekin bular faqat"
+    info "Apple'ning 'Java o'rnating' stub'lari — haqiqiy JDK alohida o'rnatilishi shart."
+    echo
+    try_this_install "Java JDK (haqiqiy)" \
+      "macOS (brew, tavsiya)" "brew install --cask zulu@17" \
+      "macOS (Adoptium)"      "open https://adoptium.net/temurin/releases/?package=jdk" \
+      "macOS (Oracle)"        "open https://www.oracle.com/java/technologies/downloads/" \
+      "Linux (Debian/Ubuntu)" "sudo apt install default-jdk" \
+      "Linux (Fedora/RHEL)"   "sudo dnf install java-17-openjdk-devel"
+    info "O'rnatgandan keyin tekshirish: ${BOLD}java -version${NC} (versiya raqami chiqishi kerak)"
+    return 1
+  fi
+
   step "Yangi Android keystore yaratilmoqda"
 
-  local default_dir="$HOME/keys"
-  local default_name="${PROJECT_NAME}-release.jks"
+  # v1.12.5: Flutter community-popular default'lar
+  # Folder: android/ (project root ichida) — .gitignore avtomatik *.jks qo'shadi
+  # Filename: key.jks — Flutter tutorials va Stack Overflow'da eng tarqalgan
+  # Alias: key — qisqa, ko'pchilik tutorials shuni ishlatadi
+  local default_dir="android"
+  local default_name="key.jks"
 
   read -p "    Keystore papkasi [${default_dir}]: " kdir
   kdir="${kdir:-$default_dir}"
@@ -1889,8 +1934,10 @@ create_new_keystore() {
   fi
 
   local al sp sp2 kp
-  read -p "    Key alias [upload]: " al
-  al="${al:-upload}"
+  # v1.12.5: 'key' default — Flutter community'da eng tarqalgan
+  # (rasmiy doc'da 'upload', lekin tutorials va GitHub repos'da 'key' ko'p uchraydi)
+  read -p "    Key alias [key]: " al
+  al="${al:-key}"
 
   while true; do
     read -s -p "    Keystore parol (kamida 6 belgi): " sp; echo
@@ -1964,6 +2011,13 @@ create_new_keystore() {
       info "${BOLD}Sabab:${NC} JDK 17+ JKS o'rniga PKCS12 talab qiladi"
       info "Bu ogohlantirish, lekin xato emas — keystore yaratilgan bo'lishi mumkin"
       try_this "ls -la \"$kpath\"   # fayl bormi tekshirish"
+    elif echo "$kt_out" | grep -qiE "Unable to locate a Java Runtime|No Java runtime|JRE.*not found|visit http://www.java.com"; then
+      info "${BOLD}Sabab:${NC} Java JDK haqiqatan o'rnatilmagan (macOS keytool stub bug'i)"
+      info "macOS'da /usr/bin/keytool stub mavjud, lekin haqiqiy JDK o'rnatilishi shart"
+      try_this_install "Java JDK" \
+        "macOS (brew, tavsiya)" "brew install --cask zulu@17" \
+        "macOS (Adoptium)"      "open https://adoptium.net/temurin/releases/?package=jdk" \
+        "Linux (Debian)"        "sudo apt install default-jdk"
     elif echo "$kt_out" | grep -qiE "unknown.*command|unrecognized|JAVA_HOME"; then
       info "${BOLD}Sabab:${NC} JDK noto'g'ri o'rnatilgan yoki JAVA_HOME muammosi"
       try_this \

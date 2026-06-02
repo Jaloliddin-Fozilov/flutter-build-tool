@@ -5,6 +5,109 @@ Loyihaning barcha muhim o'zgarishlari shu faylga yoziladi.
 Format [Keep a Changelog](https://keepachangelog.com/uz/1.1.0/) asosida,
 versiyalash esa [Semantic Versioning](https://semver.org/lang/uz/) qoidasiga rioya qiladi.
 
+## [1.12.5] — 2026-06-02
+
+### Tuzatildi — macOS Java stub bug + UX yaxshilash
+
+#### Bug: macOS keytool stub trap
+
+User real bug: keystore yaratish "Unable to locate a Java Runtime" deb
+xato berdi. Bu klassik **macOS Java stub bug'i**:
+
+- macOS 2018 dan beri Java'ni bundle qilmaydi
+- Lekin `/usr/bin/keytool`, `/usr/bin/java` **stub'lar** mavjud
+- `command -v keytool` true qaytaradi (binary exists)
+- Lekin ishga tushirilganda: "Unable to locate a Java Runtime. Please visit http://www.java.com"
+
+Bizning v1.12.4 `command -v` ga ishonib, keystore wizard'ni boshlardi.
+Foydalanuvchi 30 sekund yozardi va keyin xato olardi.
+
+### Fix #1: Pre-flight Java check
+
+Endi keystore wizard'ni boshlashdan **avval** Java ishlay olishini tekshiramiz:
+
+```bash
+java_check=$(java -version 2>&1)
+if echo "$java_check" | grep -qiE "Unable to locate a Java Runtime|No Java runtime|visit http"; then
+  err "Java JDK haqiqatan o'rnatilmagan (faqat macOS stub mavjud)"
+  # Platform-specific install hints
+  return 1
+fi
+```
+
+Bu **fail fast** patterni — foydalanuvchi 30 sekund parol kiritishdan
+oldin muammoni biladi.
+
+### Fix #2: "Unable to locate Java Runtime" pattern detection
+
+Agar baribir wizard ishga tushib qolsa, post-failure detector endi bu
+specific xato'ni ham aniqlay oladi:
+
+```
+ℹ Sabab: Java JDK haqiqatan o'rnatilmagan (macOS keytool stub bug'i)
+  macOS'da /usr/bin/keytool stub mavjud, lekin haqiqiy JDK o'rnatilishi shart
+```
+
+### Fix #3: --doctor Java check
+
+`flutter-build --doctor` endi haqiqiy Java o'rnatilganligini tekshiradi:
+
+```
+Android deploy talab'lari:
+  ✓ openssl                 (OpenSSL 3.6.0)
+  ✗ Java JDK              o'rnatilmagan (keytool faqat macOS stub)
+        Android keystore yaratish ishlamaydi
+        O'rnatish: brew install --cask zulu@17
+```
+
+### UX yaxshilash: Community-popular default'lar
+
+User'ning so'rovi asosida default'lar Flutter community'da eng tarqalgan
+qiymatlarga o'zgartirildi:
+
+| Field | Eski default | Yangi default | Sabab |
+|-------|--------------|---------------|-------|
+| Folder | `$HOME/keys` | `android` | Flutter tutorials, project-local |
+| Filename | `${PROJECT_NAME}-release.jks` | `key.jks` | Eng tarqalgan, qisqa |
+| Alias | `upload` | `key` | Tutorials/GitHub repos'da ko'p |
+
+`android/` default xavfsiz chunki `ensure_gitignore_for_keys` allaqachon
+`*.jks` ni `android/.gitignore` ga qo'shadi.
+
+### Foydalanuvchi nuqtai nazaridan
+
+Eski (v1.12.4) — keystore wizard ishlatib 30 sekund parol yozgandan keyin:
+```
+✗ Keystore yaratishda xatolik
+⚠ keytool xato xabari:
+    Unable to locate a Java Runtime
+ℹ Eng keng tarqalgan sabablar: [generic list]
+```
+
+Yangi (v1.12.5) — wizard boshlamasdan oldin:
+```
+✗ Java JDK haqiqatan o'rnatilmagan (faqat macOS stub mavjud)
+ℹ Tafsilot: Unable to locate a Java Runtime
+
+ℹ macOS bug: /usr/bin/keytool va /usr/bin/java mavjud, lekin bular faqat
+ℹ Apple'ning 'Java o'rnating' stub'lari — haqiqiy JDK alohida o'rnatilishi shart.
+
+→ 'Java JDK (haqiqiy)' ni o'rnatish:
+  macOS (brew, tavsiya): brew install --cask zulu@17
+  macOS (Adoptium):      open https://adoptium.net/temurin/releases/?package=jdk
+  ...
+```
+
+Foydalanuvchi **darrov bilib** Java'ni o'rnatadi va qayta urinadi.
+
+### Test natijalari
+
+5/5 unit test:
+- macOS stub correctly detected
+- Real OpenJDK NOT detected as stub (false positive guard)
+- Oracle Java NOT detected as stub
+- Version extraction from OpenJDK and Oracle outputs
+
 ## [1.12.4] — 2026-06-02
 
 ### Tuzatildi — Keystore yaratish silent failure
@@ -960,6 +1063,7 @@ yangi yo'lni oladi (3 loyiha → 1 ta fayl tahriri).
 - AAB va APK formatlari, Production va Debug rejimlari.
 - Build natijalarini Finder'da avtomatik ochish.
 
+[1.12.5]: https://github.com/Jaloliddin-Fozilov/flutter-build-tool/releases/tag/v1.12.5
 [1.12.4]: https://github.com/Jaloliddin-Fozilov/flutter-build-tool/releases/tag/v1.12.4
 [1.12.3]: https://github.com/Jaloliddin-Fozilov/flutter-build-tool/releases/tag/v1.12.3
 [1.12.2]: https://github.com/Jaloliddin-Fozilov/flutter-build-tool/releases/tag/v1.12.2
