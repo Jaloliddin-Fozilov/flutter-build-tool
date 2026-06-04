@@ -22,7 +22,7 @@
 set -eo pipefail
 
 # ─── Skript ma'lumotlari ──────────────────────────────────
-SCRIPT_VERSION="1.12.7"
+SCRIPT_VERSION="1.13.0"
 SCRIPT_REPO="Jaloliddin-Fozilov/flutter-build-tool"
 SCRIPT_RAW_URL="https://raw.githubusercontent.com/${SCRIPT_REPO}/main/flutter_build.sh"
 
@@ -1195,17 +1195,18 @@ main_menu() {
     banner "Flutter Build Tool — Asosiy menu (v${SCRIPT_VERSION})"
 
     echo -e "  ${BOLD}╭─ Tanlovingiz ───────────────────────────────────────────╮${NC}"
-    echo -e "  ${BOLD}│${NC}  ${CYAN}1${NC}) ${BOLD}🚀 Build${NC} (asosiy oqim)                              ${BOLD}│${NC}"
-    echo -e "  ${BOLD}│${NC}  ${CYAN}2${NC}) ⚙️  Sozlamalar                                          ${BOLD}│${NC}"
-    echo -e "  ${BOLD}│${NC}  ${CYAN}3${NC}) 🩺 Doctor (tizim tekshiruvi)                            ${BOLD}│${NC}"
-    echo -e "  ${BOLD}│${NC}  ${CYAN}4${NC}) ⬆️  Android track promotion                              ${BOLD}│${NC}"
-    echo -e "  ${BOLD}│${NC}  ${CYAN}5${NC}) 📊 Rollout foizini oshirish                              ${BOLD}│${NC}"
-    echo -e "  ${BOLD}│${NC}  ${CYAN}6${NC}) 📋 Akkauntlar va loyihalarni ko'rish                     ${BOLD}│${NC}"
+    echo -e "  ${BOLD}│${NC}  ${CYAN}1${NC}) ${BOLD}🚀 Build${NC} (build qilish + upload)                    ${BOLD}│${NC}"
+    echo -e "  ${BOLD}│${NC}  ${CYAN}2${NC}) ${BOLD}📤 Upload${NC} (build qilmasdan, oxirgisini yuklash)    ${BOLD}│${NC}"
+    echo -e "  ${BOLD}│${NC}  ${CYAN}3${NC}) ⚙️  Sozlamalar                                          ${BOLD}│${NC}"
+    echo -e "  ${BOLD}│${NC}  ${CYAN}4${NC}) 🩺 Doctor (tizim tekshiruvi)                            ${BOLD}│${NC}"
+    echo -e "  ${BOLD}│${NC}  ${CYAN}5${NC}) ⬆️  Android track promotion                              ${BOLD}│${NC}"
+    echo -e "  ${BOLD}│${NC}  ${CYAN}6${NC}) 📊 Rollout foizini oshirish                              ${BOLD}│${NC}"
+    echo -e "  ${BOLD}│${NC}  ${CYAN}7${NC}) 📋 Akkauntlar va loyihalarni ko'rish                     ${BOLD}│${NC}"
     echo -e "  ${BOLD}├─────────────────────────────────────────────────────────${NC}"
     echo -e "  ${BOLD}│${NC}  ${CYAN}q${NC}) Chiqish                                                   ${BOLD}│${NC}"
     echo -e "  ${BOLD}╰─────────────────────────────────────────────────────────${NC}"
     echo
-    read -p "  Tanlang [1-6, q] [1]: " choice
+    read -p "  Tanlang [1-7, q] [1]: " choice
     choice="${choice:-1}"
 
     case "$choice" in
@@ -1222,19 +1223,31 @@ main_menu() {
         fi
         ;;
       2)
-        settings_main_menu
+        # v1.13.0: Upload-only — build qilmasdan oxirgi artifact'ni yuklash
+        if upload_only_flow; then
+          echo
+          info "Upload yakunlandi — menu'ga qaytdik"
+          pause
+        else
+          echo
+          warn "Upload bekor qilindi yoki xato berdi — menu'ga qaytdik"
+          pause
+        fi
         ;;
       3)
+        settings_main_menu
+        ;;
+      4)
         run_diagnostics
         pause
         ;;
-      4)
+      5)
         menu_promote_interactive
         ;;
-      5)
+      6)
         menu_rollout_interactive
         ;;
-      6)
+      7)
         menu_view_accounts_and_projects
         ;;
       q|Q)
@@ -4563,7 +4576,46 @@ upload_to_play_store() {
     "${api_base}/edits/${edit_id}:commit" \
     -H "Authorization: Bearer ${token}" 2>&1) || {
       err "Commit xato: $commit_response"
-      info "Edit ID: $edit_id (qo'lda Play Console'da tekshirish mumkin)"
+      echo
+      # v1.13.0: HTTP code'ga ko'ra batafsil diagnostika
+      # 403 — eng tez-tez uchraydigan commit muammosi (Release Manager ruxsati yo'q)
+      if echo "$commit_response" | grep -qE "returned error: 403|HTTP/[12][^ ]* 403|\"code\": *403|forbidden|Forbidden"; then
+        info "${BOLD}Sabab:${NC} Service Account 'Release Manager' ruxsatiga ega emas"
+        info "(Edit yaratish va track qo'shish ishladi — demak ba'zi ruxsat'lar bor,"
+        info " lekin commit qilish uchun ${BOLD}'Manage releases'${NC} ruxsati alohida kerak)"
+        echo
+        info "${BOLD}Yechim — Play Console'da SA ruxsatini qo'shish:${NC}"
+        try_this \
+          "open 'https://play.google.com/console/u/0/users-and-permissions'" \
+          "# 1. Service Account'ni toping: $sa_email" \
+          "# 2. Edit (qalam) bosing" \
+          "# 3. 'App permissions' bo'limini oching" \
+          "# 4. '$package_name' loyihasini qo'shing" \
+          "# 5. 'Releases' bo'limidan tanlang:" \
+          "#    - 'Release to production, exclude devices...' (production track uchun)" \
+          "#    - 'Release apps to testing tracks' (internal/alpha/beta uchun)" \
+          "# 6. 'Apply' va 'Invite user'/Save bosing" \
+          "# 7. 2-5 daqiqa kuting (Google'da cache yangilanishi)" \
+          "# 8. Skriptni qayta ishga tushiring"
+      elif echo "$commit_response" | grep -qE "returned error: 401|HTTP/[12][^ ]* 401|\"code\": *401|[Uu]nauthorized"; then
+        info "${BOLD}Sabab:${NC} Access token muddati o'tdi yoki noto'g'ri"
+        info "(token 1 soat amal qiladi — bu nadir)"
+        try_this "flutter-build   # qaytadan ishga tushiring (yangi token olinadi)"
+      elif echo "$commit_response" | grep -qE "edit.*not found|editId|404"; then
+        info "${BOLD}Sabab:${NC} Edit ID muddati o'tdi (24 soatdan ko'p ochiq turdi)"
+        info "(yoki boshqa sessiya bu edit'ni allaqachon commit qilgan)"
+        try_this "flutter-build   # qaytadan ishga tushiring"
+      elif echo "$commit_response" | grep -qE "version code|versionCode"; then
+        info "${BOLD}Sabab:${NC} versionCode konfliktida (allaqachon ishlatilgan)"
+        try_this "flutter-build   # menu'da build #ga '+' bosing (+1)"
+      else
+        info "${BOLD}Sabab:${NC} aniq emas — javobni tekshiring"
+        info "Xato: $commit_response"
+      fi
+      echo
+      info "Edit ID: ${BOLD}$edit_id${NC}"
+      info "  Qo'lda tekshirish: https://play.google.com/console/u/0/developers/-/app/${package_name}/app-dashboard"
+      info "  (Pending changes' bo'limida ko'rinadi — discard yoki commit qilish mumkin)"
       return 1
     }
 
@@ -4574,6 +4626,312 @@ upload_to_play_store() {
   info "Play Console: https://play.google.com/console/u/0/developers/-/app/${package_name}/tracks/${track}"
   info "Internal track'ga 1-2 daqiqada, beta/production'ga 1-2 soatda paydo bo'ladi"
   return 0
+}
+
+# ─── v1.13.0: Upload-only rejim (build qilmasdan, oxirgi artifact'ni yuklash) ─
+
+# Yordamchi: faylning yaratilgan vaqtini human-readable formatda qaytaradi
+# macOS va Linux uchun cross-platform.
+file_mtime_human() {
+  local file="$1"
+  if [ "$(uname)" = "Darwin" ]; then
+    stat -f '%Sm' "$file" 2>/dev/null
+  else
+    stat -c '%y' "$file" 2>/dev/null | cut -d'.' -f1
+  fi
+}
+
+# Asosiy upload-only oqimi — foydalanuvchi platforma tanlaydi, oxirgi artifact'ni
+# topib, akkaunt'ni resolve qilib, yuklaydi. Build qilmaydi.
+#
+# Returns:
+#   0 — muvaffaqiyatli (yoki foydalanuvchi orqaga qaytdi)
+#   1 — xato (build artifact yo'q yoki upload xato berdi)
+upload_only_flow() {
+  banner "Upload (build qilmasdan)"
+
+  # Pre-flight: Flutter loyihasi ekanini tekshirish
+  if [ ! -f "pubspec.yaml" ]; then
+    err "pubspec.yaml topilmadi"
+    info "Flutter loyihasi ildizidan ishga tushiring (pubspec.yaml shu yerda bo'lishi kerak)"
+    pause
+    return 1
+  fi
+
+  echo
+  info "Bu rejimda skript ${BOLD}build qilmaydi${NC} — faqat mavjud AAB/IPA fayl'ni yuklaydi"
+  info "(qayta build qilmaslik = 5-15 daqiqa tejash; build allaqachon bor bo'lsa qulay)"
+  echo
+
+  # Platforma tanlash
+  echo -e "  ${BOLD}╭─ Qaysi platformaga upload qilamiz? ────────────────────╮${NC}"
+  echo -e "  ${BOLD}│${NC}  ${CYAN}1${NC}) 🤖 Android (oxirgi AAB → Play Store)            ${BOLD}│${NC}"
+  echo -e "  ${BOLD}│${NC}  ${CYAN}2${NC}) 🍏 iOS (oxirgi IPA → App Store Connect)         ${BOLD}│${NC}"
+  echo -e "  ${BOLD}│${NC}  ${CYAN}3${NC}) 🚀 Ikkalasi ham (Android keyin iOS)              ${BOLD}│${NC}"
+  echo -e "  ${BOLD}├─────────────────────────────────────────────────────────${NC}"
+  echo -e "  ${BOLD}│${NC}  ${CYAN}b${NC}) Orqaga (asosiy menu)                                ${BOLD}│${NC}"
+  echo -e "  ${BOLD}╰─────────────────────────────────────────────────────────${NC}"
+  echo
+
+  local platform
+  read -p "  Tanlang [1-3, b] [1]: " platform
+  platform="${platform:-1}"
+
+  case "$platform" in
+    1) upload_android_only_flow ;;
+    2) upload_ios_only_flow ;;
+    3)
+      # Android avval, keyin iOS — birinchisi xato bo'lsa ham ikkinchisini sinab ko'ramiz
+      upload_android_only_flow
+      local android_rc=$?
+      echo
+      info "─── iOS upload boshlanmoqda ───"
+      upload_ios_only_flow
+      local ios_rc=$?
+      [ $android_rc -eq 0 ] && [ $ios_rc -eq 0 ]
+      return $?
+      ;;
+    b|B)
+      return 0
+      ;;
+    *)
+      warn "Noto'g'ri tanlov: '$platform'"
+      sleep 1
+      return 1
+      ;;
+  esac
+}
+
+# Android — oxirgi AAB'ni Play Store'ga yuklash (build qilmasdan)
+upload_android_only_flow() {
+  banner "Android — oxirgi AAB'ni yuklash"
+
+  # Oxirgi AAB'ni topish
+  local aab
+  aab=$(find_latest_aab 2>/dev/null) || {
+    err "AAB topilmadi"
+    echo
+    info "Bizning skript ${BOLD}build/app/outputs/bundle/release/${NC} ichidan qidiradi"
+    info "Bu papka bo'sh — demak hech qachon Android production build qilinmagan"
+    echo
+    info "${BOLD}Yechim:${NC}"
+    try_this \
+      "flutter-build   # Build → Production → Android tanlang" \
+      "# Bir marta build qilingach, keyinchalik shu menu orqali tezda upload"
+    pause
+    return 1
+  }
+
+  # AAB ma'lumotlari
+  local size_mb mtime
+  size_mb=$(du -m "$aab" | cut -f1)
+  mtime=$(file_mtime_human "$aab")
+
+  # pubspec dan version
+  local pubspec_version pubspec_name pubspec_build
+  pubspec_version=$(awk '/^version:/{print $2; exit}' pubspec.yaml 2>/dev/null)
+  pubspec_name="${pubspec_version%%+*}"          # 1.2.3+45 → 1.2.3
+  pubspec_build="${pubspec_version##*+}"          # 1.2.3+45 → 45
+
+  # Package va akkaunt resolve
+  local pkg account track
+  pkg=$(detect_android_package_name)
+  if [ -z "$pkg" ]; then
+    err "Android applicationId aniqlanmadi (android/app/build.gradle topilmadi yoki noto'g'ri)"
+    pause
+    return 1
+  fi
+
+  account=$(play_project_config_get "$pkg" "account")
+  if [ -z "$account" ]; then
+    warn "Loyiha '${pkg}' uchun Play Store akkaunti sozlanmagan"
+    info "Hozir sozlaymizmi? (akkaunt tanlash yoki yangi qo'shish)"
+    if ! ensure_play_credentials; then
+      pause
+      return 1
+    fi
+    account=$(play_project_config_get "$pkg" "account")
+  fi
+  track=$(play_project_config_get "$pkg" "track")
+  track="${track:-internal}"
+
+  # Akkaunt JSON faylini tekshirish
+  local sa_path sa_email
+  sa_path=$(play_account_get "$account" "service_account_path")
+  if [ -z "$sa_path" ] || [ ! -f "$sa_path" ]; then
+    err "Akkaunt '${account}' uchun service account JSON topilmadi"
+    info "Akkauntni qayta sozlash kerak: flutter-build --settings"
+    pause
+    return 1
+  fi
+  sa_email=$(sa_json_get_simple "$sa_path" "client_email")
+
+  echo
+  step "AAB ma'lumotlari (Play Store'ga yuklanadigan):"
+  info "  ${BOLD}Fayl:${NC}        $aab"
+  info "  ${BOLD}O'lchami:${NC}    ${size_mb} MB"
+  info "  ${BOLD}Yaratilgan:${NC}  $mtime"
+  if [ -n "$pubspec_version" ]; then
+    info "  ${BOLD}pubspec ver:${NC} $pubspec_version  ${BLUE}(versionName=${pubspec_name}, versionCode=${pubspec_build})${NC}"
+  fi
+  echo
+  step "Upload destinatsiyasi:"
+  info "  ${BOLD}Package:${NC}     $pkg"
+  info "  ${BOLD}Akkaunt:${NC}     $account"
+  info "  ${BOLD}Service Acc:${NC} $sa_email"
+  info "  ${BOLD}Track:${NC}       $track"
+  echo
+
+  # Eslatma: agar AAB versionCode allaqachon Play Store'da bor bo'lsa, upload 4xx beradi
+  warn "Eslatma: agar bu versionCode (${pubspec_build}) Play Store'da allaqachon bor bo'lsa,"
+  warn "upload xato beradi. Yangi build raqami uchun: flutter-build → '+' bilan +1"
+  echo
+
+  local yn
+  read -p "  Davom etamizmi? (y/n) [y]: " yn
+  if [[ "$yn" =~ ^[Nn]$ ]]; then
+    info "Bekor qilindi"
+    return 0
+  fi
+
+  # Release notes yig'ish (build flow'dagi kabi)
+  RELEASE_NOTES=$(collect_release_notes "$pubspec_name" "$pubspec_build")
+
+  # Staged rollout — faqat production track uchun
+  STAGED_ROLLOUT_FRACTION=""
+  if [ "$track" = "production" ]; then
+    echo
+    info "Production track tanlandi — staged rollout"
+    echo -e "  ${BOLD}Foydalanuvchilarga foiz bilan release:${NC}"
+    echo -e "    ${CYAN}1${NC}) 100%  — barchaga darrov (default)"
+    echo -e "    ${CYAN}2${NC}) 50%   — yarmiga"
+    echo -e "    ${CYAN}3${NC}) 10%   — sinov uchun"
+    echo -e "    ${CYAN}4${NC}) 1%    — minimal sinov"
+    echo
+    local roll_choice
+    read -p "  Tanlang [1-4] [1]: " roll_choice
+    case "${roll_choice:-1}" in
+      1) STAGED_ROLLOUT_FRACTION="1.0" ;;
+      2) STAGED_ROLLOUT_FRACTION="0.5" ;;
+      3) STAGED_ROLLOUT_FRACTION="0.1" ;;
+      4) STAGED_ROLLOUT_FRACTION="0.01" ;;
+      *) STAGED_ROLLOUT_FRACTION="1.0" ;;
+    esac
+    ok "Rollout: $(awk "BEGIN{printf \"%.0f\", $STAGED_ROLLOUT_FRACTION * 100}")%"
+  fi
+
+  # Upload — mavjud play_publish funksiyasi
+  if upload_to_play_store "$aab"; then
+    # Promotion taklif (faqat internal/alpha/beta uchun ma'noli)
+    if [ "$track" != "production" ]; then
+      play_suggest_promotion "$pkg" "$track"
+    fi
+    echo
+    ok "Android upload muvaffaqiyatli yakunlandi"
+    return 0
+  else
+    echo
+    warn "Android upload xato berdi — AAB hali ham mavjud: $aab"
+    info "Qayta urinib ko'rish uchun shu menu'ga qaytib keling"
+    pause
+    return 1
+  fi
+}
+
+# iOS — oxirgi IPA'ni App Store Connect'ga yuklash (build qilmasdan)
+upload_ios_only_flow() {
+  banner "iOS — oxirgi IPA'ni yuklash"
+
+  # macOS check (iOS upload faqat macOS'da)
+  if [ "$(uname)" != "Darwin" ]; then
+    err "iOS upload faqat macOS'da ishlaydi (xcrun talab qilinadi)"
+    pause
+    return 1
+  fi
+
+  # Oxirgi IPA
+  local ipa
+  ipa=$(find_latest_ipa 2>/dev/null) || {
+    err "IPA topilmadi"
+    echo
+    info "Bizning skript ${BOLD}build/ios/ipa/${NC} ichidan qidiradi"
+    info "Bu papka bo'sh — demak hech qachon iOS production build qilinmagan"
+    echo
+    info "${BOLD}Yechim:${NC}"
+    try_this \
+      "flutter-build   # Build → Production → iOS tanlang" \
+      "# Bir marta build qilingach, keyinchalik shu menu orqali tezda upload"
+    pause
+    return 1
+  }
+
+  # IPA ma'lumotlari
+  local size_mb mtime
+  size_mb=$(du -m "$ipa" | cut -f1)
+  mtime=$(file_mtime_human "$ipa")
+
+  local pubspec_version
+  pubspec_version=$(awk '/^version:/{print $2; exit}' pubspec.yaml 2>/dev/null)
+
+  # Bundle va akkaunt resolve
+  local bundle account
+  bundle=$(detect_ios_bundle_id)
+  if [ -z "$bundle" ]; then
+    err "iOS bundle id aniqlanmadi (ios/Runner.xcodeproj/project.pbxproj o'qib bo'lmadi)"
+    pause
+    return 1
+  fi
+
+  account=$(appstore_project_config_get "$bundle" "account")
+  if [ -z "$account" ]; then
+    warn "Bundle '${bundle}' uchun App Store akkaunti sozlanmagan"
+    info "Settings → Akkauntlar orqali yangisini qo'shing: flutter-build --settings"
+    pause
+    return 1
+  fi
+
+  local auth_type
+  auth_type=$(appstore_account_get_auth_type "$account")
+
+  echo
+  step "IPA ma'lumotlari (App Store'ga yuklanadigan):"
+  info "  ${BOLD}Fayl:${NC}        $ipa"
+  info "  ${BOLD}O'lchami:${NC}    ${size_mb} MB"
+  info "  ${BOLD}Yaratilgan:${NC}  $mtime"
+  if [ -n "$pubspec_version" ]; then
+    info "  ${BOLD}pubspec ver:${NC} $pubspec_version"
+  fi
+  echo
+  step "Upload destinatsiyasi:"
+  info "  ${BOLD}Bundle ID:${NC}   $bundle"
+  info "  ${BOLD}Akkaunt:${NC}     $account"
+  info "  ${BOLD}Auth usuli:${NC}  $auth_type"
+  echo
+
+  warn "Eslatma: agar bu build raqami App Store'da allaqachon bor bo'lsa,"
+  warn "upload 409 xato beradi. Yangi build uchun: flutter-build → '+' bilan +1"
+  echo
+
+  local yn
+  read -p "  Davom etamizmi? (y/n) [y]: " yn
+  if [[ "$yn" =~ ^[Nn]$ ]]; then
+    info "Bekor qilindi"
+    return 0
+  fi
+
+  # Upload — mavjud upload_to_appstore funksiyasi
+  if upload_to_appstore "$ipa"; then
+    echo
+    ok "iOS upload muvaffaqiyatli yakunlandi"
+    info "App Store Connect'da TestFlight bo'limini tekshiring (1-15 daqiqa kutadi)"
+    return 0
+  else
+    echo
+    warn "iOS upload xato berdi — IPA hali ham mavjud: $ipa"
+    info "Qayta urinib ko'rish uchun shu menu'ga qaytib keling"
+    pause
+    return 1
+  fi
 }
 
 # ─── v1.11.0: Bosqichma-bosqich (wizard) build pickers ─────

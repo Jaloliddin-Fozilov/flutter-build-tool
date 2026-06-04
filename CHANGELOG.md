@@ -5,6 +5,123 @@ Loyihaning barcha muhim o'zgarishlari shu faylga yoziladi.
 Format [Keep a Changelog](https://keepachangelog.com/uz/1.1.0/) asosida,
 versiyalash esa [Semantic Versioning](https://semver.org/lang/uz/) qoidasiga rioya qiladi.
 
+## [1.13.0] — 2026-06-04
+
+### Qo'shildi — **Upload-only rejim** (build qilmasdan yuklash)
+
+User savol: "uploadni o'zi uchun har doim build qilmasdan upload bo'limiga
+kirib ohirgi buildni upload qivorishni qo'shib ber".
+
+Mukammal — endi asosiy menu'da yangi opsiya:
+
+```
+╭─ Tanlovingiz ───────────────────────────────────────────╮
+│  1) 🚀 Build (build qilish + upload)
+│  2) 📤 Upload (build qilmasdan, oxirgisini yuklash)  ← YANGI
+│  3) ⚙️  Sozlamalar
+│  ...
+```
+
+### Yangi `upload_only_flow` wizard
+
+Foydalanuvchi tajribasi:
+1. **Asosiy menu** → "2) Upload" tanlaydi
+2. **Platforma tanlash**: Android / iOS / Ikkalasi
+3. **Oxirgi artifact aniqlanadi**:
+   - Android: `build/app/outputs/bundle/release/app-release.aab`
+   - iOS: `build/ios/ipa/*.ipa`
+4. **Ma'lumotlar ko'rsatiladi**: fayl yo'li, o'lchami, yaratilgan vaqt,
+   `pubspec` versiyasi, akkaunt, track
+5. **Tasdiqlash so'raladi**: `y/n`
+6. **Release notes** (faqat Android — interaktiv source picker)
+7. **Staged rollout** (faqat production track)
+8. **Upload boshlanadi** (mavjud `upload_to_play_store` yoki `upload_to_appstore`)
+
+### Foydalar
+
+- **⏱️  Vaqt tejash**: Flutter build 5-15 daqiqa, upload 30-90 sekund
+- **🔁 Idempotency**: bir AAB'ni qayta upload qilish mumkin (failure recovery)
+- **🐛 Bug recovery**: upload xato bersa (network, 403), qayta build kerak emas
+- **📦 CI separation**: build CI'da, upload local'da (security uchun)
+
+### Tuzatildi — Play Store commit 403 batafsil diagnostika
+
+User real holatda 403 xato olgan:
+```
+✗ Commit xato: curl: (56) The requested URL returned error: 403
+ℹ Edit ID: 02331420494787533273
+```
+
+Bu kontekstda foydalanuvchi nima qilishni bilmaydi. Endi xato 4 xil
+ko'rinishda detect qilinadi (403/401/404/versionCode) va **aniq yechim**
+beriladi:
+
+```
+✗ Commit xato: curl: (56) The requested URL returned error: 403
+
+Sabab: Service Account 'Release Manager' ruxsatiga ega emas
+(Edit yaratish va track qo'shish ishladi — demak ba'zi ruxsat'lar bor,
+ lekin commit qilish uchun 'Manage releases' ruxsati alohida kerak)
+
+Yechim — Play Console'da SA ruxsatini qo'shish:
+  → open 'https://play.google.com/console/u/0/users-and-permissions'
+  → # 1. Service Account'ni toping: ...iam.gserviceaccount.com
+  → # 2. Edit (qalam) bosing
+  → # 3. 'App permissions' bo'limini oching
+  → # 4. '<package_name>' loyihasini qo'shing
+  → # 5. 'Releases' bo'limidan tanlang:
+  →    - 'Release to production, exclude devices...' (production track)
+  →    - 'Release apps to testing tracks' (internal/alpha/beta)
+  → # 6. 'Apply' va 'Invite user'/Save bosing
+  → # 7. 2-5 daqiqa kuting (Google'da cache yangilanishi)
+
+Edit ID: 02331420494787533273
+  Qo'lda tekshirish: https://play.google.com/console/u/0/.../app-dashboard
+  (Pending changes' bo'limida ko'rinadi — discard yoki commit qilish mumkin)
+```
+
+### Texnik tafsilot
+
+**Diagnostic pattern detection**:
+- `403`: matches `returned error: 403`, `HTTP/2 403`, `"code": 403`, `forbidden`, `Forbidden`
+- `401`: token expired (1 soat amal qiladi)
+- `404`: edit ID expired (24 soatdan ko'p ochiq turdi)
+- `versionCode`: konflikt (allaqachon ishlatilgan)
+
+**Edit ID preservation**: commit xato bersa, edit hali Play Console'da
+"Pending changes" bo'limida turadi. Foydalanuvchi qo'lda commit yoki discard
+qilishi mumkin. Bizning skript edit ID'ni saqlaydi.
+
+**DRY composition**: `upload_only_flow` mavjud `upload_to_play_store` va
+`upload_to_appstore` funksiyalarini reuse qiladi. Yangi kod faqat:
+- Platforma picker
+- Artifact discovery (`find_latest_aab` / `find_latest_ipa`)
+- Pre-flight metadata display
+- Confirmation prompt
+
+### Asosiy menu o'zgarishi
+
+| Old (v1.12.7) | New (v1.13.0) |
+|---------------|---------------|
+| 1) 🚀 Build | 1) 🚀 Build |
+| 2) ⚙️  Sozlamalar | **2) 📤 Upload (build qilmasdan)** ← NEW |
+| 3) 🩺 Doctor | 3) ⚙️  Sozlamalar |
+| 4) ⬆️  Android promotion | 4) 🩺 Doctor |
+| 5) 📊 Rollout | 5) ⬆️  Android promotion |
+| 6) 📋 Akkauntlar | 6) 📊 Rollout |
+| | 7) 📋 Akkauntlar |
+
+### Test natijalari
+
+5/5 unit test:
+- ✓ 403 pattern: `returned error: 403`
+- ✓ 403 pattern: `HTTP/2 403`
+- ✓ 403 pattern: `"code": 403` JSON
+- ✓ 403 pattern: `Forbidden`
+- ✓ 404 hodisasi xato MATCH bermaydi (false positive yo'q)
+- ✓ `file_mtime_human` macOS (`stat -f`) va Linux (`stat -c`) cross-platform
+- ✓ Asosiy menu render — yangi Upload bandi 2-o'rinda
+
 ## [1.12.7] — 2026-06-02
 
 ### Qo'shildi — Java JDK avtomatik o'rnatish (`brew` orqali)
@@ -1219,6 +1336,7 @@ yangi yo'lni oladi (3 loyiha → 1 ta fayl tahriri).
 - AAB va APK formatlari, Production va Debug rejimlari.
 - Build natijalarini Finder'da avtomatik ochish.
 
+[1.13.0]: https://github.com/Jaloliddin-Fozilov/flutter-build-tool/releases/tag/v1.13.0
 [1.12.7]: https://github.com/Jaloliddin-Fozilov/flutter-build-tool/releases/tag/v1.12.7
 [1.12.6]: https://github.com/Jaloliddin-Fozilov/flutter-build-tool/releases/tag/v1.12.6
 [1.12.5]: https://github.com/Jaloliddin-Fozilov/flutter-build-tool/releases/tag/v1.12.5
