@@ -22,7 +22,7 @@
 set -eo pipefail
 
 # ─── Skript ma'lumotlari ──────────────────────────────────
-SCRIPT_VERSION="1.13.7"
+SCRIPT_VERSION="1.13.8"
 SCRIPT_REPO="Jaloliddin-Fozilov/flutter-build-tool"
 SCRIPT_RAW_URL="https://raw.githubusercontent.com/${SCRIPT_REPO}/main/flutter_build.sh"
 
@@ -90,24 +90,35 @@ try_this_install() {
 # Returns:
 #   0 + stdout: keytool fayl yo'li (full path yoki shunchaki "keytool")
 #   1: hech qaerda topilmadi
+# v1.13.8: keytool haqiqatan ishlashini tekshirish (functional test)
+# Stub bo'lsa "Unable to locate a Java Runtime" chiqaradi.
+# Returns: 0 = ishlaydi, 1 = stub yoki buzilgan
+_keytool_works() {
+  local kt="$1"
+  if "$kt" -help 2>&1 | grep -qE "Unable to locate a Java Runtime|No Java runtime|visit (http|www)\.java\.com|couldn.t be completed"; then
+    return 1
+  fi
+  return 0
+}
+
 find_keytool() {
-  # 1) PATH'dagi keytool — lekin ishlay olishiga ishonch hosil qilish
-  #    (macOS stub bug: /usr/bin/keytool mavjud lekin Java yo'q)
-  # FIX: 'grep -qv' bug'i — stub xabarida bo'sh qator bor, -v keeps it -> false positive
-  # To'g'ri yondashuv: 'grep -qE' + ! negation (pattern TOPILMASA, java sog'lom)
+  # v1.13.8: har bir nomzodni _keytool_works bilan VALIDATSIYA qilamiz.
+  # Avval faqat -x (mavjudlik) tekshirardik — lekin macOS stub -x TRUE bo'ladi,
+  # ammo ishlamaydi. Endi har bir yo'lni REAL ishlatib ko'ramiz (functional test).
+
+  # 1) PATH'dagi keytool
   if command -v keytool > /dev/null 2>&1; then
-    if ! java -version 2>&1 | grep -qE "Unable to locate a Java Runtime|No Java runtime|visit http"; then
+    if _keytool_works "keytool"; then
       printf '%s\n' "keytool"
       return 0
     fi
   fi
 
   # 2) macOS: /usr/libexec/java_home — Apple'ning rasmiy JDK locator
-  #    Ro'yxatda bo'lgan har qanday JDK (Oracle, Adoptium, Zulu, Android Studio JBR) topiladi
   if [ -x "/usr/libexec/java_home" ]; then
     local jh
     jh=$(/usr/libexec/java_home 2>/dev/null)
-    if [ -n "$jh" ] && [ -x "$jh/bin/keytool" ]; then
+    if [ -n "$jh" ] && [ -x "$jh/bin/keytool" ] && _keytool_works "$jh/bin/keytool"; then
       printf '%s\n' "$jh/bin/keytool"
       return 0
     fi
@@ -134,8 +145,9 @@ find_keytool() {
     "$HOME/.jenv/versions"/*/bin/keytool \
     /usr/lib/jvm/*/bin/keytool
   do
-    # Glob expansion: agar pattern ham mavjud bo'lsa, har qatorda hamma fayllar
-    if [ -x "$path" ]; then
+    # Glob expansion: agar pattern mos kelmasa, literal qoladi -> -x false
+    # v1.13.8: -x VA _keytool_works ikkalasi ham tekshiriladi
+    if [ -x "$path" ] && _keytool_works "$path"; then
       printf '%s\n' "$path"
       return 0
     fi
@@ -2334,6 +2346,40 @@ link_existing_keystore() {
   local keystore_test rc
   keystore_test=$("$lk_bin" -list -keystore "$kpath" -storepass "$sp" 2>&1)
   rc=$?
+
+  # v1.13.8: Java runtime stub aniqlash — find_keytool xato qaytargan bo'lishi mumkin
+  # (yoki keytool ishlatilgan vaqtda Java yo'qoldi). Auto-install taklif qilamiz.
+  if [ $rc -ne 0 ] && echo "$keystore_test" | grep -qiE "Unable to locate a Java Runtime|No Java runtime|couldn.t be completed|visit (http|www)\.java\.com"; then
+    err "Keystore'ni o'qib bo'lmadi — Java JDK ishlamayapti"
+    echo
+    info "${BOLD}Sabab:${NC} keytool topildi, lekin Java Runtime yo'q (macOS stub bug)"
+    info "keytool yo'li: ${lk_bin}"
+    echo
+    # Auto-install taklif (create_new_keystore'dagi kabi)
+    local new_kt
+    new_kt=$(offer_jdk_auto_install)
+    if [ -n "$new_kt" ]; then
+      ok "Yangi ishchi keytool: ${BOLD}${new_kt}${NC}"
+      lk_bin="$new_kt"
+      export_java_home_from_keytool "$lk_bin"
+      # Qayta urinib ko'ramiz
+      echo
+      step "Keystore qayta o'qilmoqda (yangi Java bilan)..."
+      keystore_test=$("$lk_bin" -list -keystore "$kpath" -storepass "$sp" 2>&1)
+      rc=$?
+    else
+      info "Java o'rnatilmadi — keystore tekshirilmasdan davom etamiz (skip mode)"
+      info "Parol/alias to'g'riligi build vaqtida bilinadi"
+      echo
+      read -p "    Key alias: " al
+      read -s -p "    Key parol [keystore parol bilan bir xil]: " kp; echo
+      kp="${kp:-$sp}"
+      write_key_properties "$sp" "$kp" "$al" "$kpath"
+      ensure_gitignore_for_keys
+      ensure_gradle_signing_config
+      return 0
+    fi
+  fi
 
   if [ $rc -ne 0 ]; then
     err "Keystore'ni o'qib bo'lmadi"

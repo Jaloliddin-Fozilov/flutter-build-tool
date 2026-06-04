@@ -5,6 +5,93 @@ Loyihaning barcha muhim o'zgarishlari shu faylga yoziladi.
 Format [Keep a Changelog](https://keepachangelog.com/uz/1.1.0/) asosida,
 versiyalash esa [Semantic Versioning](https://semver.org/lang/uz/) qoidasiga rioya qiladi.
 
+## [1.13.8] — 2026-06-04
+
+### Tuzatildi — `find_keytool` har bir yo'lni FUNCTIONAL validatsiya qiladi
+
+User report: keystore ulashda `keytool` "Unable to locate a Java Runtime"
+xato berdi, garchi Android Studio JBR keytool mavjud va ishchi bo'lsa ham.
+
+### Sabab — existence test vs functional test
+
+`find_keytool` 3 ta joydan qidirardi, lekin har birini faqat **`-x`
+(mavjudlik)** bilan tekshirardi:
+
+```bash
+if [ -x "$path" ]; then    # ✗ faqat fayl bormi
+  printf '%s\n' "$path"
+fi
+```
+
+Muammo: macOS stub `/usr/bin/keytool` **`-x` TRUE** qaytaradi (executable),
+lekin ishlamaydi (Java yo'q). Demak `find_keytool` ba'zan **stub'ni qaytarib
+yuborardi**.
+
+Plus step 1 (PATH keytool) `java -version` tekshirardi, lekin `keytool` ni
+qaytarardi — agar `java` PATH'da bo'lmasa "command not found" chiqib, stub
+pattern'ga mos kelmasdi va bare keytool qaytarilardi.
+
+### Fix — `_keytool_works` functional test
+
+Yangi helper har bir keytool'ni **REAL ishlatib** ko'radi:
+
+```bash
+_keytool_works() {
+  local kt="$1"
+  if "$kt" -help 2>&1 | grep -qE "Unable to locate a Java Runtime|..."; then
+    return 1   # stub yoki buzilgan
+  fi
+  return 0     # ishlaydi
+}
+```
+
+`find_keytool` endi **har bir yo'lni** (3 ta joy ham) `-x` VA `_keytool_works`
+bilan tekshiradi. Faqat **haqiqatan ishlaydigan** keytool qaytariladi.
+
+### link_existing_keystore — Java runtime auto-install fallback
+
+Agar keystore o'qishda "Unable to locate a Java Runtime" chiqsa, endi
+avtomatik `offer_jdk_auto_install` chaqiriladi (create_new_keystore'dagi kabi):
+
+```
+✗ Keystore'ni o'qib bo'lmadi — Java JDK ishlamayapti
+
+Sabab: keytool topildi, lekin Java Runtime yo'q (macOS stub bug)
+
+Homebrew bilan avtomatik o'rnatishim mumkin:
+  Buyruq: brew install --cask zulu@17
+
+  Hozir avtomatik o'rnataylikmi? (y/n) [y]: y
+[install...]
+✓ Yangi ishchi keytool: /Library/Java/.../keytool
+
+▶ Keystore qayta o'qilmoqda (yangi Java bilan)...
+✓ Keystore o'qildi — parol to'g'ri
+```
+
+### Sizning Mac'da test
+
+```
+find_keytool: /Applications/Android Studio.app/Contents/jbr/Contents/Home/bin/keytool
+✓ ISHLAYDI (Android Studio JBR)
+```
+
+Endi sizning Mac'da `find_keytool` **bare stub'ni qaytarmaydi** — Android
+Studio JBR'ni topadi va validatsiya qiladi.
+
+### Texnik tafsilot
+
+**Existence vs functional test**: `[ -x file ]` faqat "executable bit"ni
+tekshiradi — fayl bajariladigan, lekin **ishlay oladimi** — bilmaydi. macOS
+stub'lar `-x` TRUE, lekin Java yo'qligida fail bo'ladi. **Functional test**
+(`keytool -help`) — yagona ishonchli yo'l. Bu **trust-but-verify** pattern'ning
+yana bir qo'llanishi.
+
+**Defense in depth**: 3 qatlam himoya:
+1. `find_keytool` faqat ishlaydigan keytool qaytaradi (functional test)
+2. `link_existing_keystore` Java runtime xato'sini aniqlaydi
+3. Auto-install fallback (brew zulu@17) + retry
+
 ## [1.13.7] — 2026-06-04
 
 ### Tuzatildi — **Multi-account Play Console**'da noto'g'ri account muammosi
@@ -2057,6 +2144,7 @@ yangi yo'lni oladi (3 loyiha → 1 ta fayl tahriri).
 - AAB va APK formatlari, Production va Debug rejimlari.
 - Build natijalarini Finder'da avtomatik ochish.
 
+[1.13.8]: https://github.com/Jaloliddin-Fozilov/flutter-build-tool/releases/tag/v1.13.8
 [1.13.7]: https://github.com/Jaloliddin-Fozilov/flutter-build-tool/releases/tag/v1.13.7
 [1.13.6]: https://github.com/Jaloliddin-Fozilov/flutter-build-tool/releases/tag/v1.13.6
 [1.13.5]: https://github.com/Jaloliddin-Fozilov/flutter-build-tool/releases/tag/v1.13.5
