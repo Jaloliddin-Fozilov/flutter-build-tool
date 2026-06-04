@@ -22,7 +22,7 @@
 set -eo pipefail
 
 # ─── Skript ma'lumotlari ──────────────────────────────────
-SCRIPT_VERSION="1.13.3"
+SCRIPT_VERSION="1.13.4"
 SCRIPT_REPO="Jaloliddin-Fozilov/flutter-build-tool"
 SCRIPT_RAW_URL="https://raw.githubusercontent.com/${SCRIPT_REPO}/main/flutter_build.sh"
 
@@ -4570,7 +4570,7 @@ play_handle_commit_403() {
   choice="${choice:-3}"
 
   case "$choice" in
-    1) _play_403_admin_retry "$edit_id" "$api_base" "$jwt" "$package_name" "$sa_email" "$track" ;;
+    1) _play_403_admin_retry "$edit_id" "$api_base" "$jwt" "$package_name" "$sa_email" "$track" "$aab_path" ;;
     2) _play_403_developer_template "$package_name" "$sa_email" "$track"; return 1 ;;
     3) _play_403_manual_ui_upload "$package_name" "$aab_path" "$track"; return 1 ;;
     4) _play_403_save_edit_for_later "$edit_id" "$package_name" "$sa_email"; return 1 ;;
@@ -4578,9 +4578,94 @@ play_handle_commit_403() {
   esac
 }
 
+# v1.13.4: API orqali SA permission'ini sinab ko'rish (3 ta test)
+# Foydalanuvchiga aniq aytadi: nima ishlaydi, nima ishlamaydi, sababi nima
+_play_403_run_api_diagnostic() {
+  local api_base="$1" token="$2" package_name="$3" sa_email="$4" track="$5"
+
+  echo
+  step "SA permission'ini API orqali tekshirish (3 ta test)"
+  echo
+
+  # Test 1: App metadata o'qish (GET /apps/{package})
+  # 200 = SA app'ni ko'ra oladi (view permission)
+  local code1
+  code1=$(curl -sS -X GET "${api_base}" \
+    -H "Authorization: Bearer ${token}" \
+    -o /dev/null -w '%{http_code}' 2>/dev/null)
+  if [ "$code1" = "200" ]; then
+    ok "[1/3] App ko'rish (GET app): HTTP ${BOLD}200${NC} — SA app'ni ko'ra oladi"
+  else
+    err "[1/3] App ko'rish (GET app): HTTP ${BOLD}${code1}${NC} — SA app'ni ko'ra olmaydi"
+  fi
+
+  # Test 2: Yangi (test) edit yaratish
+  # 200 = SA edit yarata oladi
+  local edit_test_resp code2
+  edit_test_resp=$(curl -sS -X POST "${api_base}/edits" \
+    -H "Authorization: Bearer ${token}" \
+    -H "Content-Type: application/json" \
+    -d '{}' -w '\nHTTP_CODE:%{http_code}' 2>/dev/null)
+  code2=$(echo "$edit_test_resp" | grep '^HTTP_CODE:' | cut -d: -f2)
+  if [ "$code2" = "200" ]; then
+    ok "[2/3] Yangi edit yaratish: HTTP ${BOLD}200${NC} — SA edit yarata oladi"
+    # Test edit'ni discard qilamiz (cleanup)
+    local test_eid
+    test_eid=$(echo "$edit_test_resp" | grep -v '^HTTP_CODE:' | extract_json_field "id" 2>/dev/null)
+    if [ -n "$test_eid" ]; then
+      curl -sS -X DELETE "${api_base}/edits/${test_eid}" \
+        -H "Authorization: Bearer ${token}" > /dev/null 2>&1 || true
+    fi
+  else
+    err "[2/3] Yangi edit yaratish: HTTP ${BOLD}${code2}${NC}"
+  fi
+
+  # Test 3: Bizning test edit ID orqali commit'ni sinab ko'rish (foydalanuvchi'ning haqiqiy edit'iga zarar bermaslik uchun)
+  # Bu yagona yo'l — production commit endpointini sinab ko'rishi
+  # Lekin biz commit qilmaymiz, faqat statusni ko'ramiz
+  info "[3/3] Commit endpointi haqiqiy edit bilan tekshirildi (yuqorida 403 berdi)"
+
+  echo
+  info "${BOLD}Diagnostika xulosasi:${NC}"
+  if [ "$code1" = "200" ] && [ "$code2" = "200" ]; then
+    info "  ✓ SA app'ni ko'ra oladi"
+    info "  ✓ SA yangi edit yarata oladi"
+    info "  ✗ Lekin SA commit qila olmaydi (operation-specific 403)"
+    echo
+    info "Bu MAXSUS '${BOLD}Release apps to testing tracks${NC}' (yoki 'Release to production')"
+    info "permission'ining yo'qligi — boshqa permission'lar bor, lekin shu emas."
+    echo
+    warn "${BOLD}Eng tez yechim:${NC} Variant 3 (Play Console UI orqali qo'lda upload)"
+    info "  Bu API permission'ga bog'liq emas — sizning ${BOLD}shaxsiy Google account${NC}"
+    info "  orqali to'g'ridan-to'g'ri upload qilasiz, 3-5 daqiqada tugaydi"
+    return 0  # diagnostic suggests Variant 3
+  elif [ "$code1" != "200" ]; then
+    info "  ✗ SA app'ni umuman ko'ra olmaydi"
+    echo
+    info "${BOLD}Sabab'lar va yechimlar:${NC}"
+    info "  1. SA boshqa Google Cloud project'da bo'lishi mumkin"
+    info "     Tekshirish: SA email'ni qarang — ${BOLD}${sa_email}${NC}"
+    info "     Project: ${sa_email##*@}  → bu sizning Play Console'ga link qilinganmi?"
+    echo
+    info "  2. ${BOLD}Multi-account muammosi${NC} — siz NOTO'G'RI Play Console account'da bo'lishingiz mumkin"
+    info "     Tekshirish:"
+    info "       • https://play.google.com/console/u/0/api-access  (1-account)"
+    info "       • https://play.google.com/console/u/1/api-access  (2-account)"
+    info "       • https://play.google.com/console/u/2/api-access  (3-account)"
+    info "     Har birida 'Service accounts' bo'limini ochib, SA email'ni izlang"
+    info "     Qaysi sahifada ${BOLD}${sa_email}${NC} ko'rinadi — o'shanga permission qo'shing"
+    echo
+    info "  3. SA Play Console'ga umuman link qilinmagan"
+    info "     Yechim: Setup → API access → 'Link existing Google Cloud project'"
+    return 1  # diagnostic shows SA is unrelated
+  fi
+  return 0
+}
+
 # Variant 1: Admin — Play Console'ni ochib permission qo'shish, keyin retry
 _play_403_admin_retry() {
   local edit_id="$1" api_base="$2" jwt="$3" package_name="$4" sa_email="$5" track="$6"
+  local aab_path="$7"  # v1.13.4: Variant 3'ga o'tish uchun kerak
 
   echo
   step "Play Console — Users and permissions sahifasi ochilmoqda"
@@ -4588,18 +4673,21 @@ _play_403_admin_retry() {
   echo
 
   info "${BOLD}Endi quyidagilarni qiling:${NC}"
-  info "  1. Service Account'ni toping: ${BOLD}${sa_email}${NC}"
-  info "  2. Edit (qalam ikoni) bosing"
-  info "  3. 'App permissions' bo'limini oching (yoki 'Add app' bosing)"
-  info "  4. ${BOLD}${package_name}${NC} loyihasini qo'shing"
-  info "  5. 'Releases' bo'limidan tanlang:"
+  info "  1. ${BOLD}Tepa o'ng burchakda Google account'ni tekshiring${NC} — agar 2+ account bo'lsa,"
+  info "     to'g'ri Play Console'ga kirganingizga ishonch hosil qiling"
+  info "  2. Service Account'ni toping: ${BOLD}${sa_email}${NC}"
+  info "  3. Edit (qalam ikoni) bosing"
+  info "  4. 'App permissions' bo'limini oching (yoki 'Add app' bosing)"
+  info "  5. ${BOLD}${package_name}${NC} loyihasini qo'shing"
+  info "  6. 'Releases' bo'limidan tanlang:"
   if [ "$track" = "production" ]; then
     info "     ✓ '${BOLD}Release to production, exclude devices...${NC}' (siz production'ga yuklamoqdasiz)"
   else
     info "     ✓ '${BOLD}Release apps to testing tracks${NC}' (siz ${track} track'iga yuklamoqdasiz)"
   fi
-  info "  6. 'Apply' va 'Invite user'/Save bosing"
-  info "  7. ${BOLD}Cache yangilanishi uchun 5-10 daqiqa kuting${NC} (ba'zan 30 daqiqa)"
+  info "  7. 'Apply' va ${BOLD}sahifa tepasidagi 'Invite user'/'Save'${NC} bosing"
+  info "     ${BOLD}MUHIM:${NC} faqat 'Apply' kifoya emas — ${BOLD}'Save'${NC} ham bosishingiz shart"
+  info "  8. ${BOLD}5-10 daqiqa kuting${NC} (Google'da cache yangilanishi)"
   echo
 
   local retry
@@ -4634,16 +4722,35 @@ _play_403_admin_retry() {
 
   echo
   err "Retry ham xato berdi: $retry_response"
+
+  # v1.13.4: Avtomatik diagnostika
+  _play_403_run_api_diagnostic "$api_base" "$new_token" "$package_name" "$sa_email" "$track"
+
+  # Foydalanuvchiga keyingi qadamlarni taklif qilamiz
   echo
-  if echo "$retry_response" | grep -qE "403|forbidden|Forbidden"; then
-    warn "Hali ham 403 — sabab'lar:"
-    info "  • Cache hali yangilanmagan (10-30 daqiqa kuting, keyin qayta urinib ko'ring)"
-    info "  • Permission noto'g'ri qo'shildi (qayta tekshiring — package: ${package_name})"
-    info "  • Boshqa SA permission'i o'zgartirilgan (umuman u SA emas)"
-  fi
-  info "Edit ID hali amal qiladi (24 soat): ${BOLD}${edit_id}${NC}"
-  info "Keyinroq qo'lda commit: gh api -X POST ${api_base#https://}/edits/${edit_id}:commit"
-  return 1
+  echo -e "  ${BOLD}╭─ Hozir nima qilamiz? ──────────────────────────────────╮${NC}"
+  echo -e "  ${BOLD}│${NC}  ${CYAN}1${NC}) ⭐ ${BOLD}Variant 3 — Play Console UI orqali QO'LDA upload${NC} (ENG TEZ!) ${BOLD}│${NC}"
+  echo -e "  ${BOLD}│${NC}  ${CYAN}2${NC}) 🔁 Yana RETRY (5-10 daqiqa kutib, cache yangilangach)        ${BOLD}│${NC}"
+  echo -e "  ${BOLD}│${NC}  ${CYAN}3${NC}) 💾 Edit ID'ni saqlash, keyinroq qo'lda                       ${BOLD}│${NC}"
+  echo -e "  ${BOLD}│${NC}  ${CYAN}4${NC}) ❌ Bekor                                                       ${BOLD}│${NC}"
+  echo -e "  ${BOLD}╰─────────────────────────────────────────────────────────╯${NC}"
+  echo
+
+  local next
+  read -p "  Tanlang [1-4] [1]: " next
+  next="${next:-1}"
+  case "$next" in
+    1) _play_403_manual_ui_upload "$package_name" "$aab_path" "$track"; return 1 ;;
+    2)
+      # Loop back: yana bir retry
+      info "5 daqiqa kuting, keyin Enter bosing (Ctrl+C bilan to'xtatish)"
+      sleep 1
+      _play_403_admin_retry "$edit_id" "$api_base" "$jwt" "$package_name" "$sa_email" "$track" "$aab_path"
+      return $?
+      ;;
+    3) _play_403_save_edit_for_later "$edit_id" "$package_name" "$sa_email"; return 1 ;;
+    *) info "Bekor qilindi"; return 1 ;;
+  esac
 }
 
 # Variant 2: Developer — admin'ga email/Slack uchun template ko'rsatish

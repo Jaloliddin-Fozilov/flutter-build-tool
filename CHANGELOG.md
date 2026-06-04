@@ -5,6 +5,108 @@ Loyihaning barcha muhim o'zgarishlari shu faylga yoziladi.
 Format [Keep a Changelog](https://keepachangelog.com/uz/1.1.0/) asosida,
 versiyalash esa [Semantic Versioning](https://semver.org/lang/uz/) qoidasiga rioya qiladi.
 
+## [1.13.4] — 2026-06-04
+
+### Qo'shildi — **API orqali avtomatik diagnostika** retry'dan keyin
+
+User report: admin retry qilingan, "permission qo'shdim" deyilgan, lekin
+retry hali ham 403. Sababi noma'lum — passive xato xabari foydalanuvchini
+boshi berk ko'chada qoldiradi.
+
+### Yangi `_play_403_run_api_diagnostic` funksiyasi
+
+Retry muvaffaqiyatsiz bo'lganda, **avtomatik** 3 ta API test ishga tushadi:
+
+```
+▶ SA permission'ini API orqali tekshirish (3 ta test)
+
+  ✓ [1/3] App ko'rish (GET app): HTTP 200 — SA app'ni ko'ra oladi
+  ✓ [2/3] Yangi edit yaratish: HTTP 200 — SA edit yarata oladi
+  ℹ [3/3] Commit endpointi haqiqiy edit bilan tekshirildi (yuqorida 403 berdi)
+
+Diagnostika xulosasi:
+  ✓ SA app'ni ko'ra oladi
+  ✓ SA yangi edit yarata oladi
+  ✗ Lekin SA commit qila olmaydi (operation-specific 403)
+
+Bu MAXSUS 'Release apps to testing tracks' (yoki 'Release to production')
+permission'ining yo'qligi — boshqa permission'lar bor, lekin shu emas.
+
+⚠ Eng tez yechim: Variant 3 (Play Console UI orqali qo'lda upload)
+  Bu API permission'ga bog'liq emas — sizning shaxsiy Google account
+  orqali to'g'ridan-to'g'ri upload qilasiz, 3-5 daqiqada tugaydi
+```
+
+### Yoki — SA noto'g'ri account'da bo'lsa, multi-account guidance
+
+```
+Diagnostika xulosasi:
+  ✗ SA app'ni umuman ko'ra olmaydi
+
+Sabab'lar va yechimlar:
+  1. SA boshqa Google Cloud project'da bo'lishi mumkin
+     Tekshirish: SA email'ni qarang — ...@rentmi-b2fb6.iam.gserviceaccount.com
+     Project: rentmi-b2fb6.iam.gserviceaccount.com → bu sizning Play Console'ga link qilinganmi?
+
+  2. Multi-account muammosi — siz NOTO'G'RI Play Console account'da bo'lishingiz mumkin
+     Tekshirish:
+       • https://play.google.com/console/u/0/api-access  (1-account)
+       • https://play.google.com/console/u/1/api-access  (2-account)
+       • https://play.google.com/console/u/2/api-access  (3-account)
+     Har birida 'Service accounts' bo'limini ochib, SA email'ni izlang
+     Qaysi sahifada SA ko'rinadi — o'shanga permission qo'shing
+
+  3. SA Play Console'ga umuman link qilinmagan
+     Yechim: Setup → API access → 'Link existing Google Cloud project'
+```
+
+### Active fallback recommendation
+
+Diagnostikadan keyin **passive xato qoldirmaymiz**. Foydalanuvchiga 4 ta
+aniq tanlov beriladi:
+
+```
+╭─ Hozir nima qilamiz? ──────────────────────────────────╮
+│  1) ⭐ Variant 3 — Play Console UI orqali QO'LDA upload (ENG TEZ!)
+│  2) 🔁 Yana RETRY (5-10 daqiqa kutib, cache yangilangach)
+│  3) 💾 Edit ID'ni saqlash, keyinroq qo'lda
+│  4) ❌ Bekor
+╰─────────────────────────────────────────────────────────╯
+
+  Tanlang [1-4] [1]:
+```
+
+Default `1` — chunki bu **eng tezkor** yechim, API permission ishlatmaydi.
+
+### Yaxshilangan admin retry instruksiya
+
+Foydalanuvchi'ga MUHIM 2 ta nuqta qo'shildi:
+
+1. **Multi-account check**: "Tepa o'ng burchakda Google account'ni tekshiring —
+   agar 2+ account bo'lsa, to'g'ri Play Console'ga kirganingizga ishonch hosil qiling"
+
+2. **'Apply' vs 'Save'**: "MUHIM: faqat 'Apply' kifoya emas — 'Save' ham
+   bosishingiz shart" (bu Play Console UI'ning eng tez-tez uchraydigan trap'i)
+
+### Texnik tafsilot
+
+**API verification pattern**: bizning skript foydalanuvchiga ishonish o'rniga,
+**API'dan haqiqiy holatni so'raydi**. 3 ta endpoint sinaymiz:
+- `GET /apps/{pkg}` — view permission
+- `POST /edits` — edit yaratish permission (cleanup orqali test edit'ni o'chiramiz)
+- Commit endpoint — biz allaqachon bilamiz (asosiy upload'da xato berdi)
+
+Bu **trust but verify** pattern — foydalanuvchi "qo'shdim" deganida, biz
+"o'zimiz tekshirib ko'ramiz". Bu xato'larni aniqlash uchun **eng aniq** yo'l.
+
+**Test edit cleanup**: API test edit yaratamiz, lekin uni DELETE qilamiz.
+Bu Play Console'da "Pending changes" bo'limida orphan edit qoldirmaslik
+uchun (foydalanuvchini hayronga solmaslik uchun).
+
+**Recursive retry**: agar foydalanuvchi 2-variant tanlasa (yana retry),
+funksiya o'ziga o'zi qayta chaqiriladi (recursive). Bu **trampolin recovery** —
+foydalanuvchi cache yangilanguncha kuta oladi va ko'p marta retry qila oladi.
+
 ## [1.13.3] — 2026-06-04
 
 ### Tuzatildi — **Android Studio "Generate Signed Bundle"** AAB topilmas edi
@@ -1642,6 +1744,7 @@ yangi yo'lni oladi (3 loyiha → 1 ta fayl tahriri).
 - AAB va APK formatlari, Production va Debug rejimlari.
 - Build natijalarini Finder'da avtomatik ochish.
 
+[1.13.4]: https://github.com/Jaloliddin-Fozilov/flutter-build-tool/releases/tag/v1.13.4
 [1.13.3]: https://github.com/Jaloliddin-Fozilov/flutter-build-tool/releases/tag/v1.13.3
 [1.13.2]: https://github.com/Jaloliddin-Fozilov/flutter-build-tool/releases/tag/v1.13.2
 [1.13.1]: https://github.com/Jaloliddin-Fozilov/flutter-build-tool/releases/tag/v1.13.1
