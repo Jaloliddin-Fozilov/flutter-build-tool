@@ -5,6 +5,86 @@ Loyihaning barcha muhim o'zgarishlari shu faylga yoziladi.
 Format [Keep a Changelog](https://keepachangelog.com/uz/1.1.0/) asosida,
 versiyalash esa [Semantic Versioning](https://semver.org/lang/uz/) qoidasiga rioya qiladi.
 
+## [1.13.3] — 2026-06-04
+
+### Tuzatildi — **Android Studio "Generate Signed Bundle"** AAB topilmas edi
+
+User report: "baribir topilmadi deyapti aslida `/Users/hehe/Desktop/flutter_projects/gennis_todo/android/app/release` shu papkada turibti, aab file"
+
+### Sabab
+
+Android Studio'ning **2 ta** build menyu'si bor va ular AAB'ni **boshqa-boshqa joylarga** yozadi:
+
+| Menyu | AAB joy |
+|-------|---------|
+| Build → Build Bundle(s) / APK(s) → Build Bundle(s) | `android/app/build/outputs/bundle/release/` |
+| **Build → Generate Signed Bundle / APK → Bundle** | **`android/app/release/`** ← v1.13.3 fix |
+
+v1.13.1 da faqat birinchi menyu joyini qidirardik. Foydalanuvchi **"Generate Signed Bundle"** menyu'ni ishlatsa (signed AAB uchun ko'pchilik shu menyu'dan foydalanadi), bizning skript topa olmasdi.
+
+### Yangi qidiruv joylari (4 → 7)
+
+```
+1. build/app/outputs/bundle/release/                  (Flutter CLI default)
+2. android/app/build/outputs/bundle/release/          (Android Studio Gradle)
+3. android/app/release/                               (Android Studio Signed Bundle) ← v1.13.3
+4. build/app/outputs/bundle/*/                        (Flutter CLI flavor)
+5. android/app/build/outputs/bundle/*/                (Gradle flavor)
+6. android/app/release/*/                             (Signed Bundle flavor) ← v1.13.3
+7. android/ va build/ ichida recursive (maxdepth 6)   ← v1.13.3 catch-all
+```
+
+`find_latest_ipa` ham xuddi shunday catch-all bilan kengaytirildi.
+
+### Yangi "Manual yo'l kiritish" opsiyasi
+
+Agar 7 ta joydan ham topilmasa, **siz aniq joyni bilsangiz**, manual kiritishingiz mumkin:
+
+```
+Hozir nima qilamiz?
+  1) Manual yo'l kiritish (siz AAB joyini bilasiz)
+  2) Build qilamiz (Flutter CLI orqali)
+  3) Android Studio'ni ochaman
+  4) Bekor qilish
+
+  Tanlang [1-4] [1]:
+```
+
+Variant 1 → "AAB yo'li: " prompt → siz to'g'ridan-to'g'ri yo'lni kiritasiz:
+```
+AAB yo'li: ~/Desktop/flutter_projects/gennis_todo/android/app/release/app-release.aab
+✓ Manual AAB qabul qilindi: /Users/hehe/Desktop/.../app-release.aab
+```
+
+Skript tekshiradi:
+- Fayl mavjudligini (`-f`)
+- `.aab` kengaytmasini (boshqa kengaytma bo'lsa ogohlantirish)
+- Tilde expansion (`~/...` → `$HOME/...`)
+
+### Tajriba taqqoslash
+
+| Versiya | Sizning vaziyat: `android/app/release/app-release.aab` |
+|---------|--------------------------------------------------------|
+| v1.13.1 | ✗ Topilmadi — qidiruv yo'q edi |
+| v1.13.2 | ✗ Topilmadi — qidiruv yo'q edi |
+| **v1.13.3** | **✓ Joy #3'da AYNAN topiladi** |
+
+### Test natijalari
+
+4/4 unit test:
+- ✓ Joy #3: `android/app/release/app-release.aab` topiladi (sizning vaziyat)
+- ✓ Joy #6: `android/app/release/dev/app-dev-release.aab` (flavor) topiladi
+- ✓ Joy #7: `android/custom/wherever/myapp-signed.aab` (catch-all) topiladi
+- ✓ Hech qaerda yo'q → exit 1 (false positive yo'q)
+
+### Texnik tafsilot
+
+**Specificity ladder**: 7 ta joy aniqlikdan kengayishga tartiblangan. Joy #1-#3 — aniq fayl yo'llari (eng tez). Joy #4-#6 — flavor subdirektoriyalar. Joy #7 — `find -maxdepth 6` recursive (eng sekin, lekin eng keng).
+
+**`maxdepth 6` xavfsizligi**: bu chuqurlik `.gradle/intermediates/`, `build/tmp/` kabi vaqtinchalik papkalarni o'tkazib yuboradi — chunki bularning ichida AAB **odatda yo'q**. Faqat **final signed AAB**'lar shu chuqurlikgacha boradi.
+
+**Tilde expansion**: bash `${path/#\~/$HOME}` ifodasi yo'l boshidagi `~`'ni `$HOME` bilan almashtiradi. Bu standart Unix konvensiya'sini qo'llab-quvvatlaydi.
+
 ## [1.13.2] — 2026-06-04
 
 ### Qo'shildi — Play Store commit 403 uchun **interaktiv recovery menyusi**
@@ -1562,6 +1642,7 @@ yangi yo'lni oladi (3 loyiha → 1 ta fayl tahriri).
 - AAB va APK formatlari, Production va Debug rejimlari.
 - Build natijalarini Finder'da avtomatik ochish.
 
+[1.13.3]: https://github.com/Jaloliddin-Fozilov/flutter-build-tool/releases/tag/v1.13.3
 [1.13.2]: https://github.com/Jaloliddin-Fozilov/flutter-build-tool/releases/tag/v1.13.2
 [1.13.1]: https://github.com/Jaloliddin-Fozilov/flutter-build-tool/releases/tag/v1.13.1
 [1.13.0]: https://github.com/Jaloliddin-Fozilov/flutter-build-tool/releases/tag/v1.13.0

@@ -22,7 +22,7 @@
 set -eo pipefail
 
 # ─── Skript ma'lumotlari ──────────────────────────────────
-SCRIPT_VERSION="1.13.2"
+SCRIPT_VERSION="1.13.3"
 SCRIPT_REPO="Jaloliddin-Fozilov/flutter-build-tool"
 SCRIPT_RAW_URL="https://raw.githubusercontent.com/${SCRIPT_REPO}/main/flutter_build.sh"
 
@@ -3097,13 +3097,14 @@ PLIST
 }
 
 # IPA fayl yo'lini topish — multi-location qidirish.
-# Flutter CLI (`flutter build ipa`) va Xcode (Archive → Distribute App)
-# IPA'ni turli joylarga yozadi. v1.13.1: 4 ta joydan qidiradi.
+# Flutter CLI va Xcode IPA'ni turli joylarga yozadi.
+# v1.13.3: 5 ta joydan qidiradi (catch-all recursive qo'shildi)
 #
 #   1. Flutter CLI default:    build/ios/ipa/
-#   2. Flutter CLI ba'zi versiyalar: build/ios/iphoneos/
-#   3. Xcode build joyi:       ios/build/Build/Products/Release-iphoneos/
-#   4. Loyiha ildizi:          ./ (qo'lda export qilingan IPA)
+#   2. Flutter CLI eski:       build/ios/iphoneos/
+#   3. Xcode build joyi:       ios/build/
+#   4. Loyiha ildizi:          ./ (Xcode export'i odatda shu yerga)
+#   5. Catch-all recursive:    build/ va ios/ ichida har qaerda
 find_latest_ipa() {
   # 1. Flutter CLI default
   local d1="build/ios/ipa"
@@ -3127,7 +3128,7 @@ find_latest_ipa() {
     fi
   fi
 
-  # 3. Xcode build joyi (agar Xcode orqali archive qilingan bo'lsa)
+  # 3. Xcode build joyi
   if [ -d "ios/build" ]; then
     local ipa
     ipa=$(find "ios/build" -maxdepth 5 -name "*.ipa" -type f 2>/dev/null | head -1)
@@ -3137,13 +3138,28 @@ find_latest_ipa() {
     fi
   fi
 
-  # 4. Loyiha ildizi (Xcode → Distribute App ko'pincha shu yerga yoki Desktop'ga
-  # export qiladi; biz ildizdagi *.ipa'ni topamiz, Desktop'ga zarar bermaymiz)
+  # 4. Loyiha ildizi (Xcode export)
   local ipa
   ipa=$(find . -maxdepth 2 -name "*.ipa" -type f 2>/dev/null | head -1)
   if [ -n "$ipa" ]; then
     printf '%s\n' "$ipa"
     return 0
+  fi
+
+  # 5. v1.13.3: Catch-all recursive — build/ va ios/ ichida har qaerda
+  if [ -d "build" ]; then
+    ipa=$(find "build" -maxdepth 6 -name "*.ipa" -type f 2>/dev/null | head -1)
+    if [ -n "$ipa" ]; then
+      printf '%s\n' "$ipa"
+      return 0
+    fi
+  fi
+  if [ -d "ios" ]; then
+    ipa=$(find "ios" -maxdepth 6 -name "*.ipa" -type f 2>/dev/null | head -1)
+    if [ -n "$ipa" ]; then
+      printf '%s\n' "$ipa"
+      return 0
+    fi
   fi
 
   return 1
@@ -4418,17 +4434,21 @@ play_increase_rollout() {
 }
 
 # Build natijasidan AAB faylini topish — multi-location qidirish.
-# Flutter CLI (`flutter build appbundle`) va Android Studio (Build → Generate
-# Signed Bundle) AAB'ni boshqa-boshqa joylarga yozadi. Bu funksiya 4 ta
-# joydan qidiradi (specificity ladder — eng aniq birinchi):
+# Flutter CLI, Android Studio Gradle, va Android Studio "Generate Signed Bundle"
+# AAB'ni turli joylarga yozadi. Bu funksiya 7 ta joydan qidiradi (specificity
+# ladder — eng aniq birinchi):
 #
-#   1. Flutter CLI default:    build/app/outputs/bundle/release/
-#   2. Android Studio default: android/app/build/outputs/bundle/release/
-#   3. Flutter CLI flavor:     build/app/outputs/bundle/*/
-#   4. Android Studio flavor:  android/app/build/outputs/bundle/*/
+#   1. Flutter CLI default:                   build/app/outputs/bundle/release/
+#   2. Android Studio Gradle default:         android/app/build/outputs/bundle/release/
+#   3. Android Studio "Generate Signed Bundle": android/app/release/   (v1.13.3)
+#   4. Flutter CLI flavor:                    build/app/outputs/bundle/*/
+#   5. Android Studio Gradle flavor:          android/app/build/outputs/bundle/*/
+#   6. Android Studio Signed Bundle flavor:   android/app/release/*/  (v1.13.3)
+#   7. Catch-all recursive scan:              android/ va build/ ichida  (v1.13.3)
 #
-# v1.13.1: avval faqat (1) joyga qarardi — Android Studio orqali build
-# qilingan AAB topilmasdi. Endi 4 ta joydan qidiradi.
+# v1.13.1: 4 ta joydan qidirardi (Android Studio Gradle default qo'shildi)
+# v1.13.3: 7 ta joydan qidiradi (Android Studio "Generate Signed Bundle" qo'shildi +
+#          recursive catch-all — har qanday custom build joyi)
 find_latest_aab() {
   # 1. Flutter CLI default
   local p1="build/app/outputs/bundle/release/app-release.aab"
@@ -4437,14 +4457,23 @@ find_latest_aab() {
     return 0
   fi
 
-  # 2. Android Studio default (Gradle standart yo'li)
+  # 2. Android Studio Gradle default (Build → Build Bundle(s))
   local p2="android/app/build/outputs/bundle/release/app-release.aab"
   if [ -f "$p2" ]; then
     printf '%s\n' "$p2"
     return 0
   fi
 
-  # 3. Flutter CLI flavor (build/app/outputs/bundle/devRelease/, etc.)
+  # 3. v1.13.3: Android Studio "Generate Signed Bundle / APK" default
+  # Bu menyu Build → Generate Signed Bundle / APK orqali ishlaydi va
+  # default destinatsiya `android/app/release/` papkasidir.
+  local p3="android/app/release/app-release.aab"
+  if [ -f "$p3" ]; then
+    printf '%s\n' "$p3"
+    return 0
+  fi
+
+  # 4. Flutter CLI flavor (build/app/outputs/bundle/devRelease/, etc.)
   local f
   if [ -d "build/app/outputs/bundle" ]; then
     f=$(find "build/app/outputs/bundle" -maxdepth 2 -name "*.aab" -type f 2>/dev/null \
@@ -4455,10 +4484,40 @@ find_latest_aab() {
     fi
   fi
 
-  # 4. Android Studio flavor (android/app/build/outputs/bundle/devRelease/, etc.)
+  # 5. Android Studio Gradle flavor
   if [ -d "android/app/build/outputs/bundle" ]; then
     f=$(find "android/app/build/outputs/bundle" -maxdepth 2 -name "*.aab" -type f 2>/dev/null \
         | head -1)
+    if [ -n "$f" ]; then
+      printf '%s\n' "$f"
+      return 0
+    fi
+  fi
+
+  # 6. v1.13.3: Android Studio "Generate Signed Bundle" flavor
+  # (foydalanuvchi flavor tanlasa, app/release/<flavor>/*.aab ga yoziladi)
+  if [ -d "android/app/release" ]; then
+    f=$(find "android/app/release" -maxdepth 2 -name "*.aab" -type f 2>/dev/null \
+        | head -1)
+    if [ -n "$f" ]; then
+      printf '%s\n' "$f"
+      return 0
+    fi
+  fi
+
+  # 7. v1.13.3: Catch-all recursive scan
+  # Yuqorida sanalmagan joylarni topish uchun — masalan, custom build_type yoki
+  # bizning ma'lumotlar ro'yxatidan tashqaridagi build script. maxdepth 6 ham
+  # to'liq qamrov, ham xavfsiz (.gradle/ va intermediates'ga juda chuqur kirmaydi).
+  if [ -d "android" ]; then
+    f=$(find "android" -maxdepth 6 -name "*.aab" -type f 2>/dev/null | head -1)
+    if [ -n "$f" ]; then
+      printf '%s\n' "$f"
+      return 0
+    fi
+  fi
+  if [ -d "build" ]; then
+    f=$(find "build" -maxdepth 6 -name "*.aab" -type f 2>/dev/null | head -1)
     if [ -n "$f" ]; then
       printf '%s\n' "$f"
       return 0
@@ -5111,26 +5170,62 @@ upload_only_flow() {
 upload_android_only_flow() {
   banner "Android — oxirgi AAB'ni yuklash"
 
-  # Oxirgi AAB'ni topish (multi-location: Flutter CLI + Android Studio)
+  # Oxirgi AAB'ni topish (multi-location: 7 ta joydan)
   local aab
   aab=$(find_latest_aab 2>/dev/null) || {
     err "AAB topilmadi"
     echo
     info "Bizning skript quyidagi joylardan qidirdi:"
     info "  1. ${BOLD}build/app/outputs/bundle/release/${NC}        (Flutter CLI default)"
-    info "  2. ${BOLD}android/app/build/outputs/bundle/release/${NC} (Android Studio default)"
-    info "  3. ${BOLD}build/app/outputs/bundle/*/${NC}              (Flutter CLI flavor'lar)"
-    info "  4. ${BOLD}android/app/build/outputs/bundle/*/${NC}      (Android Studio flavor'lar)"
+    info "  2. ${BOLD}android/app/build/outputs/bundle/release/${NC} (Android Studio Gradle)"
+    info "  3. ${BOLD}android/app/release/${NC}                     (Android Studio 'Generate Signed Bundle')"
+    info "  4. ${BOLD}build/app/outputs/bundle/*/${NC}              (Flutter CLI flavor'lar)"
+    info "  5. ${BOLD}android/app/build/outputs/bundle/*/${NC}      (Android Studio Gradle flavor)"
+    info "  6. ${BOLD}android/app/release/*/${NC}                   (Signed Bundle flavor)"
+    info "  7. ${BOLD}android/${NC} va ${BOLD}build/${NC} ichida recursive (catch-all, maxdepth 6)"
     echo
     info "${BOLD}Hozir nima qilamiz?${NC}"
-    echo -e "    ${CYAN}1${NC}) Build qilamiz (Flutter CLI orqali — flutter build appbundle)"
-    echo -e "    ${CYAN}2${NC}) Android Studio'ni ochaman (qo'lda build qilaman)"
-    echo -e "    ${CYAN}3${NC}) Bekor qilish"
+    echo -e "    ${CYAN}1${NC}) ${BOLD}Manual yo'l kiritish${NC} (siz AAB joyini bilasiz)"
+    echo -e "    ${CYAN}2${NC}) Build qilamiz (Flutter CLI orqali — flutter build appbundle)"
+    echo -e "    ${CYAN}3${NC}) Android Studio'ni ochaman (qo'lda build qilaman)"
+    echo -e "    ${CYAN}4${NC}) Bekor qilish"
     echo
-    local choice
-    read -p "  Tanlang [1-3] [1]: " choice
+    local choice manual_path
+    read -p "  Tanlang [1-4] [1]: " choice
     case "${choice:-1}" in
       1)
+        # v1.13.3: Manual path entry — foydalanuvchi aniq joyni bilsa
+        echo
+        info "AAB faylga to'liq yoki nisbiy yo'lni kiriting:"
+        info "  Misol: ${BOLD}android/app/release/app-release.aab${NC}"
+        info "  Misol: ${BOLD}/Users/.../Desktop/.../app/release/app-release.aab${NC}"
+        echo
+        read -p "  AAB yo'li: " manual_path
+        # Tilde expansion
+        manual_path="${manual_path/#\~/$HOME}"
+        if [ -z "$manual_path" ]; then
+          err "Bo'sh yo'l — bekor qilindi"
+          return 1
+        fi
+        if [ ! -f "$manual_path" ]; then
+          err "Bu yo'lda fayl yo'q: $manual_path"
+          info "Tekshiring: ${BOLD}ls -la \"$manual_path\"${NC}"
+          pause
+          return 1
+        fi
+        # .aab kengaytmasi tekshiruvi (skript ehtiyot bo'lib)
+        case "$manual_path" in
+          *.aab) ;;
+          *)
+            warn "Fayl .aab bilan tugamaydi — bu Android App Bundle emasligi mumkin"
+            read -p "  Davom etamizmi? (y/n) [n]: " confirm
+            [[ ! "$confirm" =~ ^[Yy]$ ]] && return 1
+            ;;
+        esac
+        aab="$manual_path"
+        ok "Manual AAB qabul qilindi: $aab"
+        ;;
+      2)
         echo
         info "Build flow boshlanmoqda — keyin upload qilamiz"
         if main_build_flow; then
@@ -5140,7 +5235,7 @@ upload_android_only_flow() {
           return 1
         fi
         ;;
-      2)
+      3)
         info "Android Studio'ni oching va: Build → Generate Signed Bundle / APK → Bundle"
         try_this \
           "open -a 'Android Studio' android   # Android Studio'da android/ papka'ni ochish" \
@@ -5282,7 +5377,7 @@ upload_ios_only_flow() {
     return 1
   fi
 
-  # Oxirgi IPA (multi-location: Flutter CLI + Xcode)
+  # Oxirgi IPA (multi-location: 5 ta joydan)
   local ipa
   ipa=$(find_latest_ipa 2>/dev/null) || {
     err "IPA topilmadi"
@@ -5292,16 +5387,48 @@ upload_ios_only_flow() {
     info "  2. ${BOLD}build/ios/iphoneos/${NC}                     (Flutter CLI eski versiyalar)"
     info "  3. ${BOLD}ios/build/${NC}                              (Xcode build joyi)"
     info "  4. ${BOLD}./${NC}                                      (loyiha ildizi)"
+    info "  5. ${BOLD}build/${NC} va ${BOLD}ios/${NC} ichida recursive (catch-all)"
     echo
     info "${BOLD}Hozir nima qilamiz?${NC}"
-    echo -e "    ${CYAN}1${NC}) Build qilamiz (Flutter CLI orqali — flutter build ipa)"
-    echo -e "    ${CYAN}2${NC}) Xcode'ni ochaman (qo'lda Archive → Distribute App)"
-    echo -e "    ${CYAN}3${NC}) Bekor qilish"
+    echo -e "    ${CYAN}1${NC}) ${BOLD}Manual yo'l kiritish${NC} (siz IPA joyini bilasiz)"
+    echo -e "    ${CYAN}2${NC}) Build qilamiz (Flutter CLI orqali — flutter build ipa)"
+    echo -e "    ${CYAN}3${NC}) Xcode'ni ochaman (qo'lda Archive → Distribute App)"
+    echo -e "    ${CYAN}4${NC}) Bekor qilish"
     echo
-    local choice
-    read -p "  Tanlang [1-3] [1]: " choice
+    local choice manual_path
+    read -p "  Tanlang [1-4] [1]: " choice
     case "${choice:-1}" in
       1)
+        # v1.13.3: Manual path entry
+        echo
+        info "IPA faylga to'liq yoki nisbiy yo'lni kiriting:"
+        info "  Misol: ${BOLD}build/ios/ipa/Runner.ipa${NC}"
+        info "  Misol: ${BOLD}~/Desktop/MyApp.ipa${NC}"
+        echo
+        read -p "  IPA yo'li: " manual_path
+        manual_path="${manual_path/#\~/$HOME}"
+        if [ -z "$manual_path" ]; then
+          err "Bo'sh yo'l — bekor qilindi"
+          return 1
+        fi
+        if [ ! -f "$manual_path" ]; then
+          err "Bu yo'lda fayl yo'q: $manual_path"
+          info "Tekshiring: ${BOLD}ls -la \"$manual_path\"${NC}"
+          pause
+          return 1
+        fi
+        case "$manual_path" in
+          *.ipa) ;;
+          *)
+            warn "Fayl .ipa bilan tugamaydi — bu iOS App Archive emasligi mumkin"
+            read -p "  Davom etamizmi? (y/n) [n]: " confirm
+            [[ ! "$confirm" =~ ^[Yy]$ ]] && return 1
+            ;;
+        esac
+        ipa="$manual_path"
+        ok "Manual IPA qabul qilindi: $ipa"
+        ;;
+      2)
         echo
         info "Build flow boshlanmoqda — keyin upload qilamiz"
         if main_build_flow; then
@@ -5311,7 +5438,7 @@ upload_ios_only_flow() {
           return 1
         fi
         ;;
-      2)
+      3)
         info "Xcode'ni oching: Product → Archive, keyin Window → Organizer → Distribute App"
         try_this \
           "open ios/Runner.xcworkspace   # Xcode'da loyihani ochish" \
