@@ -5,6 +5,126 @@ Loyihaning barcha muhim o'zgarishlari shu faylga yoziladi.
 Format [Keep a Changelog](https://keepachangelog.com/uz/1.1.0/) asosida,
 versiyalash esa [Semantic Versioning](https://semver.org/lang/uz/) qoidasiga rioya qiladi.
 
+## [1.13.2] — 2026-06-04
+
+### Qo'shildi — Play Store commit 403 uchun **interaktiv recovery menyusi**
+
+User report: "ishlamadi yuklolmadi" — v1.13.0 dagi 403 diagnostika foydalanuvchiga
+qo'lda Play Console'da Service Account permission qo'shishni taklif qilardi.
+Lekin agar foydalanuvchi **admin emas** (developer), bu permission'ni qo'sha
+olmasdi va boshqa yo'l qolmasdi.
+
+### Yangi 5 ta variant menyusi
+
+Commit 403 xato bersa, foydalanuvchiga 5 ta aniq tanlov beriladi:
+
+```
+╭─ Bu vaziyatda qaysi variant siznikiga eng yaqin? ──────╮
+│  1) 🔧 Men Play Console adminim — hozir permission qo'shaman, RETRY
+│  2) 📧 Men developer'man — admin'ga so'rov yuboraman
+│  3) 🌐 Play Console UI orqali QO'LDA upload qilaman (eng tez!)
+│  4) 💾 Edit ID'ni saqlab, keyinroq qo'lda commit
+│  5) ❌ Bekor qilish
+╰─────────────────────────────────────────────────────────╯
+
+  Tanlang [1-5] [3]:
+```
+
+Default `3` — **eng tez yo'l** agar tezda upload qilish kerak bo'lsa.
+
+### Variant 1: Admin RETRY (in-session fix)
+
+- Play Console'ni avtomatik ochadi (`open https://...`)
+- Bosqichma-bosqich permission qo'shish ko'rsatadi
+- Track'ga (internal vs production) qarab to'g'ri permission'ni belgilaydi
+- Foydalanuvchi tasdiqlagach, **yangi access token** oladi
+- **Xuddi shu edit ID bilan** commit retry qiladi (qayta upload kerak emas)
+- Muvaffaqiyatli bo'lsa — "🎉 Commit retry'da ishladi" + asosiy success xabari
+- Hali ham 403 bo'lsa — cache wait taklif qiladi (10-30 daqiqa)
+
+### Variant 2: Developer email template (clipboard'ga avtomatik)
+
+Admin uchun professional Uzbek tilida email/Slack matni:
+
+```
+─────────── EMAIL/SLACK MATNI ──────────────────────────
+Salom!
+
+Play Console'da loyiha uchun Service Account release qilish ruxsati kerak.
+
+  Loyiha:           uz.iportal.uzrentme
+  Service Account:  flutter-build-deploy-478@rentmi-b2fb6.iam.gserviceaccount.com
+  Track:            internal
+
+Hozirgi muammo: SA edit yarata oladi va AAB yukala oladi, lekin commit
+qilish HTTP 403 xato beradi.
+
+Iltimos, quyidagilarni qiling:
+  1. Play Console > Users and permissions sahifasini oching
+  2. Service Account'ni toping
+  3. Edit > App permissions > loyihani qo'shing
+  4. 'Release apps to testing tracks' belgilang
+  5. Save, 5-30 daqiqa kuting
+
+Rahmat!
+─────────── MATN OXIRI ─────────────────────────────────
+
+✓ Matn clipboard'ga avtomatik ko'chirildi — Cmd+V bilan yopishtiring
+```
+
+macOS'da `pbcopy` orqali clipboard'ga avtomatik ko'chiriladi.
+
+### Variant 3: Play Console UI orqali QO'LDA upload (eng tez)
+
+- Play Console'ning aniq track sahifasini ochadi (internal/alpha/beta/production)
+- AAB joylashgan papkani Finder'da ochadi (drag-drop qulay)
+- 6 bosqichli yo'l-yo'riq beradi: Create release → drag AAB → release notes → save → review → rollout
+- **API permission'iga ehtiyoj yo'q** — foydalanuvchining Google account permission'i ishlatadi
+- Agar foydalanuvchi developer bo'lsa va o'zining Google account'ida upload permission'i bor bo'lsa, **darrov ishlaydi**
+
+### Variant 4: Edit ID'ni saqlab keyinroq qo'lda commit
+
+- `.flutter-build-pending-edit.json` faylga edit ma'lumotlari saqlanadi:
+  ```json
+  {
+    "package_name": "uz.iportal.uzrentme",
+    "edit_id": "06330688863274970881",
+    "service_account_email": "flutter-build-deploy-478@...",
+    "created_at": "2026-06-04T06:25:49Z",
+    "expires_at": "2026-06-05T06:25:49Z",
+    "note": "Pending commit"
+  }
+  ```
+- 24 soat amal qiladi (Google Play API limiti)
+- `.gitignore`'ga avtomatik qo'shiladi (commit'ga tushmasligi uchun)
+- Keyinroq qo'lda commit qilish yo'lini ko'rsatadi
+
+### Cross-platform clipboard
+
+- **macOS**: `pbcopy` orqali (avtomatik)
+- **Linux**: xclip/xsel mavjud bo'lsa qo'shilishi kerak (kelajakda)
+- Boshqa OS'da: matnni qo'lda ko'chirish kerak
+
+### Test natijalari
+
+3/3 unit test:
+- ✓ `_play_403_save_edit_for_later` JSON output valid
+- ✓ 5-variant menyu render
+- ✓ Heredoc'lar (TEMPLATE markerlari) to'g'ri balanslangan
+
+### Texnik tafsilot
+
+**In-session retry pattern**: Variant 1 da, foydalanuvchi permission qo'shgach,
+**xuddi shu sessiyada** retry qilamiz. Mantiqiy chain:
+1. Yangi `jwt`'dan yangi `access token` olamiz (eski'si muddati o'tgan bo'lishi mumkin)
+2. **Xuddi shu** `edit_id` bilan commit qilamiz (24h amal qiladi)
+3. AAB qayta yuklash shart emas — Google Play tomonida hali edit'ga biriktirilgan
+
+**State preservation**: Variant 4 da, edit ID `.flutter-build-pending-edit.json` ga
+saqlanadi. Bu **async recovery pattern** — admin'ga so'rov yuborilgach,
+javob kelguncha edit holatda saqlanadi. Permission qo'shilgach, qaytadan
+`flutter-build` ishga tushirilsa, **avtomatik retry** qilinishi mumkin (kelajak fix).
+
 ## [1.13.1] — 2026-06-04
 
 ### Tuzatildi — Android Studio AAB topilmas edi + "Ikkalasi" rejimi graceful
@@ -1442,6 +1562,7 @@ yangi yo'lni oladi (3 loyiha → 1 ta fayl tahriri).
 - AAB va APK formatlari, Production va Debug rejimlari.
 - Build natijalarini Finder'da avtomatik ochish.
 
+[1.13.2]: https://github.com/Jaloliddin-Fozilov/flutter-build-tool/releases/tag/v1.13.2
 [1.13.1]: https://github.com/Jaloliddin-Fozilov/flutter-build-tool/releases/tag/v1.13.1
 [1.13.0]: https://github.com/Jaloliddin-Fozilov/flutter-build-tool/releases/tag/v1.13.0
 [1.12.7]: https://github.com/Jaloliddin-Fozilov/flutter-build-tool/releases/tag/v1.12.7

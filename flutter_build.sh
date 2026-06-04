@@ -22,7 +22,7 @@
 set -eo pipefail
 
 # ─── Skript ma'lumotlari ──────────────────────────────────
-SCRIPT_VERSION="1.13.1"
+SCRIPT_VERSION="1.13.2"
 SCRIPT_REPO="Jaloliddin-Fozilov/flutter-build-tool"
 SCRIPT_RAW_URL="https://raw.githubusercontent.com/${SCRIPT_REPO}/main/flutter_build.sh"
 
@@ -4485,6 +4485,272 @@ extract_json_number() {
 }
 
 # 4 ta API call orqali AAB ni Play Store'ga yuklash
+# v1.13.2: Commit 403 uchun interaktiv recovery menyusi.
+# SA permission qo'shish admin huquqi — agar foydalanuvchi developer bo'lsa,
+# admin'ga so'rov yuborishi yoki Play Console UI orqali qo'lda upload qilishi mumkin.
+#
+# Args: edit_id api_base jwt package_name sa_email aab_path track
+# Returns:
+#   0 — retry muvaffaqiyatli (commit ishladi)
+#   1 — boshqa yo'l bilan davom etildi (qo'lda yoki saqlandi)
+play_handle_commit_403() {
+  local edit_id="$1" api_base="$2" jwt="$3" package_name="$4" sa_email="$5" aab_path="$6" track="$7"
+
+  echo
+  echo -e "  ${BOLD}╭─ Bu vaziyatda qaysi variant siznikiga eng yaqin? ──────╮${NC}"
+  echo -e "  ${BOLD}│${NC}  ${CYAN}1${NC}) 🔧 Men Play Console adminim — hozir permission qo'shaman, RETRY ${BOLD}│${NC}"
+  echo -e "  ${BOLD}│${NC}  ${CYAN}2${NC}) 📧 Men developer'man — admin'ga so'rov yuboraman              ${BOLD}│${NC}"
+  echo -e "  ${BOLD}│${NC}  ${CYAN}3${NC}) 🌐 Play Console UI orqali QO'LDA upload qilaman (eng tez!)    ${BOLD}│${NC}"
+  echo -e "  ${BOLD}│${NC}  ${CYAN}4${NC}) 💾 Edit ID'ni saqlab, keyinroq qo'lda commit                  ${BOLD}│${NC}"
+  echo -e "  ${BOLD}│${NC}  ${CYAN}5${NC}) ❌ Bekor qilish                                                ${BOLD}│${NC}"
+  echo -e "  ${BOLD}╰─────────────────────────────────────────────────────────╯${NC}"
+  echo
+
+  local choice
+  read -p "  Tanlang [1-5] [3]: " choice
+  choice="${choice:-3}"
+
+  case "$choice" in
+    1) _play_403_admin_retry "$edit_id" "$api_base" "$jwt" "$package_name" "$sa_email" "$track" ;;
+    2) _play_403_developer_template "$package_name" "$sa_email" "$track"; return 1 ;;
+    3) _play_403_manual_ui_upload "$package_name" "$aab_path" "$track"; return 1 ;;
+    4) _play_403_save_edit_for_later "$edit_id" "$package_name" "$sa_email"; return 1 ;;
+    *) info "Bekor qilindi"; return 1 ;;
+  esac
+}
+
+# Variant 1: Admin — Play Console'ni ochib permission qo'shish, keyin retry
+_play_403_admin_retry() {
+  local edit_id="$1" api_base="$2" jwt="$3" package_name="$4" sa_email="$5" track="$6"
+
+  echo
+  step "Play Console — Users and permissions sahifasi ochilmoqda"
+  open_url "https://play.google.com/console/u/0/users-and-permissions"
+  echo
+
+  info "${BOLD}Endi quyidagilarni qiling:${NC}"
+  info "  1. Service Account'ni toping: ${BOLD}${sa_email}${NC}"
+  info "  2. Edit (qalam ikoni) bosing"
+  info "  3. 'App permissions' bo'limini oching (yoki 'Add app' bosing)"
+  info "  4. ${BOLD}${package_name}${NC} loyihasini qo'shing"
+  info "  5. 'Releases' bo'limidan tanlang:"
+  if [ "$track" = "production" ]; then
+    info "     ✓ '${BOLD}Release to production, exclude devices...${NC}' (siz production'ga yuklamoqdasiz)"
+  else
+    info "     ✓ '${BOLD}Release apps to testing tracks${NC}' (siz ${track} track'iga yuklamoqdasiz)"
+  fi
+  info "  6. 'Apply' va 'Invite user'/Save bosing"
+  info "  7. ${BOLD}Cache yangilanishi uchun 5-10 daqiqa kuting${NC} (ba'zan 30 daqiqa)"
+  echo
+
+  local retry
+  read -p "  Permission qo'shdingizmi? Hozir RETRY commit qilamizmi? (y/n) [y]: " retry
+  if [[ "$retry" =~ ^[Nn]$ ]]; then
+    info "Bekor qilindi — keyinroq qaytadan urinib ko'ring"
+    info "Edit ID hali 24 soat amal qiladi: ${BOLD}${edit_id}${NC}"
+    return 1
+  fi
+
+  echo
+  step "Commit retry'da..."
+  info "Yangi access token olinmoqda (eski'si muddati o'tgan bo'lishi mumkin)..."
+
+  local new_token retry_response
+  new_token=$(play_get_access_token "$jwt") || {
+    err "Yangi token olib bo'lmadi"
+    return 1
+  }
+  ok "Yangi token olindi"
+
+  retry_response=$(curl -fsS -X POST \
+    "${api_base}/edits/${edit_id}:commit" \
+    -H "Authorization: Bearer ${new_token}" 2>&1)
+
+  if [ $? -eq 0 ]; then
+    echo
+    ok "🎉 Commit muvaffaqiyatli! (retry'da ishladi)"
+    info "Permission to'g'ri qo'shilgan ekan."
+    return 0
+  fi
+
+  echo
+  err "Retry ham xato berdi: $retry_response"
+  echo
+  if echo "$retry_response" | grep -qE "403|forbidden|Forbidden"; then
+    warn "Hali ham 403 — sabab'lar:"
+    info "  • Cache hali yangilanmagan (10-30 daqiqa kuting, keyin qayta urinib ko'ring)"
+    info "  • Permission noto'g'ri qo'shildi (qayta tekshiring — package: ${package_name})"
+    info "  • Boshqa SA permission'i o'zgartirilgan (umuman u SA emas)"
+  fi
+  info "Edit ID hali amal qiladi (24 soat): ${BOLD}${edit_id}${NC}"
+  info "Keyinroq qo'lda commit: gh api -X POST ${api_base#https://}/edits/${edit_id}:commit"
+  return 1
+}
+
+# Variant 2: Developer — admin'ga email/Slack uchun template ko'rsatish
+_play_403_developer_template() {
+  local package="$1" sa_email="$2" track="$3"
+
+  echo
+  step "Admin'ga so'rov uchun matn (copy-paste qiling)"
+  echo
+  echo "─────────── EMAIL/SLACK MATNI ──────────────────────────"
+  cat << TEMPLATE
+Salom!
+
+Play Console'da loyiha uchun Service Account release qilish ruxsati kerak.
+
+  Loyiha:           ${package}
+  Service Account:  ${sa_email}
+  Track:            ${track}
+
+Hozirgi muammo: SA edit yarata oladi va AAB yukala oladi, lekin commit
+qilish HTTP 403 xato beradi. Permission yetishmayotgani uchun.
+
+Iltimos, quyidagilarni qiling:
+
+  1. Play Console'da Users and permissions sahifasini oching:
+     https://play.google.com/console/u/0/users-and-permissions
+
+  2. Service Account'ni toping: ${sa_email}
+
+  3. Edit (qalam ikoni) bosing
+
+  4. 'App permissions' bo'limida ${package} loyihasini qo'shing
+
+  5. 'Releases' bo'limidan quyidagi permission'ni belgilang:
+TEMPLATE
+  if [ "$track" = "production" ]; then
+    echo "     ✓ 'Release to production, exclude devices...'"
+  else
+    echo "     ✓ 'Release apps to testing tracks' (internal/alpha/beta uchun)"
+  fi
+  cat << 'TEMPLATE'
+
+  6. 'Apply' va 'Invite user'/Save bosing
+
+  7. Cache yangilanishi uchun 5-30 daqiqa kuting
+
+Rahmat!
+TEMPLATE
+  echo "─────────── MATN OXIRI ─────────────────────────────────"
+  echo
+
+  # macOS pbcopy bilan clipboard'ga avtomatik ko'chirish
+  if command -v pbcopy > /dev/null 2>&1; then
+    {
+      cat << TEMPLATE
+Salom!
+
+Play Console'da loyiha uchun Service Account release qilish ruxsati kerak.
+
+  Loyiha: ${package}
+  Service Account: ${sa_email}
+  Track: ${track}
+
+Hozirgi muammo: SA edit yarata oladi va AAB yukala oladi, lekin commit qilish HTTP 403 xato beradi. Permission yetishmayotgani uchun.
+
+Iltimos, quyidagilarni qiling:
+1. Play Console > Users and permissions: https://play.google.com/console/u/0/users-and-permissions
+2. SA'ni toping: ${sa_email}
+3. Edit (qalam) > App permissions > ${package} qo'shing
+4. Releases bo'limida 'Release apps to testing tracks' (yoki production) belgilang
+5. Save, 5-30 daqiqa kuting
+
+Rahmat!
+TEMPLATE
+    } | pbcopy
+    info "${BOLD}✓ Matn clipboard'ga avtomatik ko'chirildi${NC} — Cmd+V bilan yopishtiring"
+  else
+    info "Yuqoridagi matnni qo'lda ko'chiring va admin'ga yuboring"
+  fi
+
+  echo
+  info "Admin permission qo'shgach, qaytadan flutter-build ishga tushiring"
+  info "Eski edit'ni shu Edit ID bilan retry qilish mumkin (24 soat amal qiladi)"
+}
+
+# Variant 3: Play Console UI orqali QO'LDA upload (eng tez yo'l, API permission ishlatmaydi)
+_play_403_manual_ui_upload() {
+  local package="$1" aab_path="$2" track="$3"
+
+  echo
+  step "Play Console UI — qo'lda upload (eng tez yo'l)"
+  info "Bu yo'lda Service Account permission'i kerak emas — sizning Google account'ingiz"
+  info "ishlatadi (siz developer bo'lsangiz, sizda upload permission bor)."
+  echo
+
+  local url="https://play.google.com/console/u/0/developers/-/app/${package}/tracks/${track}"
+  info "Play Console ochilmoqda: ${BOLD}${track}${NC} track sahifasi"
+  open_url "$url"
+  echo
+
+  info "${BOLD}Endi quyidagilarni qiling:${NC}"
+  info "  1. ${BOLD}'Create new release'${NC} bosing (yoki 'Edit release')"
+  info "  2. AAB faylni drag-drop qiling:"
+  info "     ${BOLD}${aab_path}${NC}"
+  info "  3. Release notes yozing (yoki avval bizning skript so'ragan notes'larni copy-paste)"
+  info "  4. ${BOLD}'Save'${NC} va ${BOLD}'Next'${NC} bosing"
+  info "  5. ${BOLD}'Review release'${NC} bosing"
+  info "  6. ${BOLD}'Start rollout to ${track}'${NC} bosing"
+  echo
+
+  # AAB joyini Finder/Files'da ochish — drag-drop osonroq
+  if [ "$(uname)" = "Darwin" ] && command -v open > /dev/null 2>&1; then
+    info "AAB joylashgan papka Finder'da ochilmoqda (drag-drop uchun)..."
+    open "$(dirname "$aab_path")"
+  fi
+
+  echo
+  info "Bu jarayonda permission'ga ehtiyoj yo'q — to'g'ridan-to'g'ri Google account orqali"
+  info "AAB allaqachon bizning skript tomonidan to'g'ri build qilingan ($([ -f "$aab_path" ] && du -h "$aab_path" | cut -f1))"
+}
+
+# Variant 4: Edit ID'ni saqlab, keyinroq qo'lda commit (yoki bizning skript orqali retry)
+_play_403_save_edit_for_later() {
+  local edit_id="$1" package="$2" sa_email="$3"
+
+  local marker_file=".flutter-build-pending-edit.json"
+  local expires_at
+  if [ "$(uname)" = "Darwin" ]; then
+    expires_at=$(date -u -v+24H +%Y-%m-%dT%H:%M:%SZ 2>/dev/null)
+  else
+    expires_at=$(date -u -d '+24 hours' +%Y-%m-%dT%H:%M:%SZ 2>/dev/null)
+  fi
+
+  cat > "$marker_file" << EOF
+{
+  "package_name": "${package}",
+  "edit_id": "${edit_id}",
+  "service_account_email": "${sa_email}",
+  "created_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+  "expires_at": "${expires_at:-24 hours from now}",
+  "note": "Bu edit Play Store'ga to'liq yuborilgan, faqat commit bosqichida 403 xato. Permission qo'shilgach, qo'lda commit qilish mumkin."
+}
+EOF
+
+  echo
+  ok "Edit ID saqlandi: ${BOLD}${marker_file}${NC}"
+  info "Fayl ichidagi ma'lumotlar:"
+  info "  • Package:     ${package}"
+  info "  • Edit ID:     ${edit_id}"
+  info "  • SA:          ${sa_email}"
+  info "  • Amal qiladi: 24 soat (gacha: ${expires_at:-?})"
+  echo
+  info "${BOLD}Keyinroq qo'lda commit qilish uchun:${NC}"
+  info "  1. Play Console'da Pending changes'ni tekshiring:"
+  info "     ${BOLD}https://play.google.com/console/u/0/developers/-/app/${package}/app-dashboard${NC}"
+  info "  2. 'Pending changes' bo'limida edit'ni topib commit qiling"
+  info "  3. Yoki bizning skript bilan: ${BOLD}flutter-build${NC} (yangi edit yaratiladi, eskisi avtomatik discard bo'ladi)"
+  echo
+  info "${BOLD}MUHIM:${NC} ${marker_file} fayli .gitignore'ga qo'shilishi kerak"
+  if [ -f ".gitignore" ] && ! grep -q "flutter-build-pending-edit" .gitignore; then
+    echo ".flutter-build-pending-edit.json" >> .gitignore
+    ok ".gitignore'ga avtomatik qo'shildi"
+  fi
+}
+
+# AAB ni Play Store'ga yuklash — 5 bosqichli API pipeline
 upload_to_play_store() {
   local aab="$1"
 
@@ -4660,25 +4926,26 @@ upload_to_play_store() {
       err "Commit xato: $commit_response"
       echo
       # v1.13.0: HTTP code'ga ko'ra batafsil diagnostika
-      # 403 — eng tez-tez uchraydigan commit muammosi (Release Manager ruxsati yo'q)
+      # v1.13.2: 403 holatida interaktiv recovery menyusi (5 ta variant)
       if echo "$commit_response" | grep -qE "returned error: 403|HTTP/[12][^ ]* 403|\"code\": *403|forbidden|Forbidden"; then
         info "${BOLD}Sabab:${NC} Service Account 'Release Manager' ruxsatiga ega emas"
         info "(Edit yaratish va track qo'shish ishladi — demak ba'zi ruxsat'lar bor,"
         info " lekin commit qilish uchun ${BOLD}'Manage releases'${NC} ruxsati alohida kerak)"
-        echo
-        info "${BOLD}Yechim — Play Console'da SA ruxsatini qo'shish:${NC}"
-        try_this \
-          "open 'https://play.google.com/console/u/0/users-and-permissions'" \
-          "# 1. Service Account'ni toping: $sa_email" \
-          "# 2. Edit (qalam) bosing" \
-          "# 3. 'App permissions' bo'limini oching" \
-          "# 4. '$package_name' loyihasini qo'shing" \
-          "# 5. 'Releases' bo'limidan tanlang:" \
-          "#    - 'Release to production, exclude devices...' (production track uchun)" \
-          "#    - 'Release apps to testing tracks' (internal/alpha/beta uchun)" \
-          "# 6. 'Apply' va 'Invite user'/Save bosing" \
-          "# 7. 2-5 daqiqa kuting (Google'da cache yangilanishi)" \
-          "# 8. Skriptni qayta ishga tushiring"
+
+        # Interaktiv recovery — admin retry / developer template / qo'lda upload / saqlash
+        if play_handle_commit_403 "$edit_id" "$api_base" "$jwt" "$package_name" "$sa_email" "$aab" "$track"; then
+          # Retry muvaffaqiyatli — `if` qonunini buzib, asosiy success'ga o'tamiz
+          # Buni quyida `goto`-style qilolmaymiz, shuning uchun bevosita success qaytaramiz
+          echo
+          ok "Muvaffaqiyatli yuklandi! (commit retry'da ishladi)"
+          info "Track:       $track"
+          info "versionCode: $version_code"
+          info "Play Console: https://play.google.com/console/u/0/developers/-/app/${package_name}/tracks/${track}"
+          return 0
+        fi
+        # play_handle_commit_403 1 qaytarsa, foydalanuvchi boshqa yo'l bilan davom etgan
+        # (qo'lda upload, saqlash, yoki bekor). Funksiya o'zi tushuntiradi nima qilish.
+        return 1
       elif echo "$commit_response" | grep -qE "returned error: 401|HTTP/[12][^ ]* 401|\"code\": *401|[Uu]nauthorized"; then
         info "${BOLD}Sabab:${NC} Access token muddati o'tdi yoki noto'g'ri"
         info "(token 1 soat amal qiladi — bu nadir)"
