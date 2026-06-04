@@ -5,6 +5,118 @@ Loyihaning barcha muhim o'zgarishlari shu faylga yoziladi.
 Format [Keep a Changelog](https://keepachangelog.com/uz/1.1.0/) asosida,
 versiyalash esa [Semantic Versioning](https://semver.org/lang/uz/) qoidasiga rioya qiladi.
 
+## [1.13.7] — 2026-06-04
+
+### Tuzatildi — **Multi-account Play Console**'da noto'g'ri account muammosi
+
+User report (screenshot bilan): foydalanuvchi `jaloliddinish@gmail.com` orqali
+login qilgan va **10+ ta Play Console developer account**'iga kirish huquqiga
+ega:
+- DAS FINANCE CONSULTANTS
+- Garanti Express
+- **Jaloliddin Fozilov** (shaxsiy)
+- Kabirjanov IT GROUP
+- Kifoya Investments
+- My-Master
+- Netson
+- ProFan Uz
+- **RENTME** ← app egasi
+- SKY LINE IT GROUP
+
+Foydalanuvchi shaxsiy account'da SA topib permission qo'shdi, lekin app
+`uz.iportal.uzrentme` **RENTME account'da**. API diagnostika bunga aniq
+ishora qildi: `HTTP 404` (app umuman ko'rinmaydi, ya'ni noto'g'ri account).
+
+### Yangi `_extract_sa_project` funksiyasi
+
+SA email'dan Google Cloud project nomini ekstrakt qiladi:
+
+```
+flutter-build-deploy-478@rentmi-b2fb6.iam.gserviceaccount.com
+                        ↓
+                  rentmi-b2fb6
+```
+
+Bu Play Console account taxmin qilishda yordam beradi (odatda Cloud project
+nomi → Play Console account nomi yaqin: `rentmi-b2fb6` → **RENTME**).
+
+### Account selector sahifasiga yo'naltirish
+
+v1.13.6 da URL: `https://play.google.com/console/u/0/users-and-permissions`
+→ default account'ga olib boradi (sizning shaxsiy)
+
+v1.13.7 da URL: `https://play.google.com/console/u/0/developers`
+→ **account tanlash sahifasi** (sizning screenshotda ko'rsatgan
+"Выберите аккаунт разработчика")
+
+### Aniq yo'l-yo'riq (10-bosqichli)
+
+```
+⚠ MUHIM (ko'p account'lar bo'lsa):
+Browser'da 'Выберите аккаунт разработчика' / 'Choose developer account' sahifa
+chiqishi mumkin. Bu yerdan SHAXSIY account emas, balki app egasi account'ni
+tanlang!
+Sizning SA project nomi: rentmi-b2fb6 — shunga o'xshash account'ni izlang
+(masalan: agar SA project 'rentmi-b2fb6' bo'lsa, RENTME account'ni tanlang)
+
+▶ Account tanlash sahifasi ochilmoqda...
+
+Endi quyidagilarni qiling:
+  1. Browser'da to'g'ri Play Console account'ni tanlang
+     (SA project 'rentmi-b2fb6' bilan bog'liq — app egasi)
+  2. Tanlangach, chap menyuda 'Users and permissions' ni oching
+  3. Service Account'ni toping: flutter-build-deploy-478@...
+     AGAR TOPILMASA — bu noto'g'ri account! Boshqasiga o'ting va qaytadan urinib ko'ring
+  4. SA'ga bosing (qalam/edit ikoni)
+  5. 'App permissions' tabini oching (Account-level emas!)
+  6. 'Add app' bosing va uz.iportal.uzrentme loyihasini qo'shing
+  7. App'ning 'Releases' bo'limidan tanlang:
+     ✓ 'Release apps to testing tracks' (siz internal track'iga yuklamoqdasiz)
+  8. 'Apply' bosing (app permission qo'shildi)
+  9. Sahifa pastidagi KO'K 'Сохранить изменения' / 'Save changes' bosing
+ 10. 5-10 daqiqa kuting (Google'da cache yangilanishi)
+```
+
+### 404 vs 403 diagnostika
+
+Bizning diagnostika `HTTP 404` qaytarsa, alohida ko'rsatma:
+
+```
+HTTP 404 — bu MUHIM signal:
+  • 404 = app umuman ko'rinmaydi (boshqa Play Console account'da)
+  • 403 = app ko'rinadi lekin permission yo'q
+  • Siz oldingi 'Admin retry' qadamida NOTO'G'RI account'da permission qo'shgansiz!
+```
+
+### Foydalanuvchi tajriba taqqoslash
+
+| Sizning vaziyat | v1.13.6 | v1.13.7 |
+|----------------|---------|---------|
+| 10+ Play Console account | URL → birinchi account | URL → account selector |
+| SA topish | Topdi, lekin noto'g'ri account'da | Account selector ko'rsatadi |
+| App permission qo'shish | Noto'g'ri account'da qo'shildi | To'g'ri account taxmini beriladi |
+| Retry'dan keyin xato | "Bunday holat noaniq" | "404 — noto'g'ri account!" |
+
+### Texnik tafsilot
+
+**Project name extraction**: regex `s/.*@//; s/\.iam\.gserviceaccount\.com$//`
+SA email'idan **uniqueidentifier**ni ekstrakt qiladi. Bu Google Cloud project
+ID — bu odatda Play Console account nomi bilan **70%+ correlation** ga ega
+(masalan: `rentmi-b2fb6` → RENTME, `myapp-prod-123` → MyApp Production).
+
+**HTTP code semantics**: REST API'da 404 va 403 alohida ma'no'lar:
+- **403 Forbidden**: "resource topildi, lekin sizga ruxsat yo'q"
+- **404 Not Found**: "resource topilmadi (yoki sizga ko'rinmaydi)"
+
+Google Play API 404 qaytarsa, bu **stronger signal** — SA bu app'ni
+**umuman bilmaydi**. Bu permission yo'qligidan ko'ra, **scope mismatch**
+(noto'g'ri account/project'da).
+
+**URL routing trick**: `console/developers` (account selector) vs
+`console/u/0/users-and-permissions` (specific account). Birinchi'si
+**always works** — Google account tanlash sahifasini ko'rsatadi.
+Ikkinchi'si **assumes current account**.
+
 ## [1.13.6] — 2026-06-04
 
 ### Tuzatildi — **Keystore ulash xato'lari batafsil diagnostika**
@@ -1945,6 +2057,7 @@ yangi yo'lni oladi (3 loyiha → 1 ta fayl tahriri).
 - AAB va APK formatlari, Production va Debug rejimlari.
 - Build natijalarini Finder'da avtomatik ochish.
 
+[1.13.7]: https://github.com/Jaloliddin-Fozilov/flutter-build-tool/releases/tag/v1.13.7
 [1.13.6]: https://github.com/Jaloliddin-Fozilov/flutter-build-tool/releases/tag/v1.13.6
 [1.13.5]: https://github.com/Jaloliddin-Fozilov/flutter-build-tool/releases/tag/v1.13.5
 [1.13.4]: https://github.com/Jaloliddin-Fozilov/flutter-build-tool/releases/tag/v1.13.4

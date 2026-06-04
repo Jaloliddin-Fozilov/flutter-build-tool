@@ -22,7 +22,7 @@
 set -eo pipefail
 
 # ─── Skript ma'lumotlari ──────────────────────────────────
-SCRIPT_VERSION="1.13.6"
+SCRIPT_VERSION="1.13.7"
 SCRIPT_REPO="Jaloliddin-Fozilov/flutter-build-tool"
 SCRIPT_RAW_URL="https://raw.githubusercontent.com/${SCRIPT_REPO}/main/flutter_build.sh"
 
@@ -4817,24 +4817,46 @@ _play_403_run_api_diagnostic() {
   elif [ "$code1" != "200" ]; then
     info "  ✗ SA app'ni umuman ko'ra olmaydi"
     echo
+
+    # v1.13.7: 404 vs 403 farqi muhim signal
+    if [ "$code1" = "404" ]; then
+      info "${BOLD}HTTP 404 — bu MUHIM signal:${NC}"
+      info "  • 404 = app umuman ko'rinmaydi (boshqa Play Console account'da)"
+      info "  • 403 = app ko'rinadi lekin permission yo'q"
+      info "  • Siz oldingi 'Admin retry' qadamida ${BOLD}NOTO'G'RI account'da permission qo'shgansiz${NC}!"
+      echo
+    fi
+
+    local sa_project
+    sa_project=$(_extract_sa_project "$sa_email")
+
     info "${BOLD}Sabab'lar va yechimlar:${NC}"
-    info "  1. SA boshqa Google Cloud project'da bo'lishi mumkin"
-    info "     Tekshirish: SA email'ni qarang — ${BOLD}${sa_email}${NC}"
-    info "     Project: ${sa_email##*@}  → bu sizning Play Console'ga link qilinganmi?"
+    info "  1. ${BOLD}SA boshqa Play Console account'iga link qilingan${NC} (eng tez-tez)"
+    info "     Sizning SA project: ${BOLD}${sa_project}${NC}"
+    info "     Bu project bilan bog'liq Play Console account topish kerak"
+    info "     (masalan: agar project 'rentmi-b2fb6' bo'lsa, RENTME account'ga o'ting)"
     echo
-    info "  2. ${BOLD}Multi-account muammosi${NC} — siz NOTO'G'RI Play Console account'da bo'lishingiz mumkin"
-    info "     Tekshirish:"
-    info "       • https://play.google.com/console/u/0/api-access  (1-account)"
-    info "       • https://play.google.com/console/u/1/api-access  (2-account)"
-    info "       • https://play.google.com/console/u/2/api-access  (3-account)"
-    info "     Har birida 'Service accounts' bo'limini ochib, SA email'ni izlang"
-    info "     Qaysi sahifada ${BOLD}${sa_email}${NC} ko'rinadi — o'shanga permission qo'shing"
+    info "  2. ${BOLD}Multi-account ro'yxati${NC} — to'g'risini tanlash:"
+    info "     ${BOLD}https://play.google.com/console/u/0/developers${NC}  ← account selector"
+    info "     Bu yerdan ${BOLD}SHAXSIY account emas${NC}, balki app egasi account'ni tanlang"
+    info "     (Sizning ssenariy: shaxsiy account 'Jaloliddin Fozilov' emas, RENTME yoki kompaniya nomi)"
     echo
-    info "  3. SA Play Console'ga umuman link qilinmagan"
+    info "  3. SA Play Console'ga umuman link qilinmagan (kam ehtimol — chunki edit yaratish ishladi)"
     info "     Yechim: Setup → API access → 'Link existing Google Cloud project'"
+    echo
+    info "${BOLD}TAVSIYA:${NC} Variant 3 (Manual UI upload) — bu API permission'siz ishlaydi"
+    info "  Sizning Google account orqali to'g'ridan-to'g'ri Play Console'da upload qilasiz"
     return 1  # diagnostic shows SA is unrelated
   fi
   return 0
+}
+
+# v1.13.7: SA email'dan Google Cloud project nomini ekstrakt qilish
+# flutter-build-deploy-478@rentmi-b2fb6.iam.gserviceaccount.com → rentmi-b2fb6
+# Bu Play Console account taxmin qilishda yordam beradi
+_extract_sa_project() {
+  local sa_email="$1"
+  echo "$sa_email" | sed -e 's/.*@//' -e 's/\.iam\.gserviceaccount\.com$//'
 }
 
 # Variant 1: Admin — Play Console'ni ochib permission qo'shish, keyin retry
@@ -4842,27 +4864,46 @@ _play_403_admin_retry() {
   local edit_id="$1" api_base="$2" jwt="$3" package_name="$4" sa_email="$5" track="$6"
   local aab_path="$7"  # v1.13.4: Variant 3'ga o'tish uchun kerak
 
+  # v1.13.7: SA project'idan account taxmin qilish
+  local sa_project
+  sa_project=$(_extract_sa_project "$sa_email")
+
   echo
-  step "Play Console — Users and permissions sahifasi ochilmoqda"
-  open_url "https://play.google.com/console/u/0/users-and-permissions"
+  step "Play Console — TO'G'RI DEVELOPER ACCOUNT tanlash"
+  info "Sizning SA Google Cloud project'i: ${BOLD}${sa_project}${NC}"
+  info "(bu SA shu Cloud project'da yaratilgan va bu project bilan bog'liq Play Console account)"
+  echo
+
+  warn "${BOLD}MUHIM (ko'p account'lar bo'lsa):${NC}"
+  warn "Browser'da '${BOLD}Выберите аккаунт разработчика${NC}' / '${BOLD}Choose developer account${NC}' sahifa chiqishi mumkin."
+  warn "Bu yerdan ${BOLD}SHAXSIY account emas${NC}, balki ${BOLD}app egasi${NC} account'ni tanlang!"
+  warn "Sizning SA project nomi: ${BOLD}${sa_project}${NC} — shunga o'xshash account'ni izlang"
+  warn "(masalan: agar SA project 'rentmi-b2fb6' bo'lsa, RENTME account'ni tanlang)"
+  echo
+
+  # Account selector sahifasini ochamiz — foydalanuvchi to'g'ri account'ni tanlasin
+  step "Account tanlash sahifasi ochilmoqda..."
+  open_url "https://play.google.com/console/u/0/developers"
   echo
 
   info "${BOLD}Endi quyidagilarni qiling:${NC}"
-  info "  1. ${BOLD}Tepa o'ng burchakda Google account'ni tekshiring${NC} — agar 2+ account bo'lsa,"
-  info "     to'g'ri Play Console'ga kirganingizga ishonch hosil qiling"
-  info "  2. Service Account'ni toping: ${BOLD}${sa_email}${NC}"
-  info "  3. Edit (qalam ikoni) bosing"
-  info "  4. 'App permissions' bo'limini oching (yoki 'Add app' bosing)"
-  info "  5. ${BOLD}${package_name}${NC} loyihasini qo'shing"
-  info "  6. 'Releases' bo'limidan tanlang:"
+  info "  1. ${BOLD}Browser'da to'g'ri Play Console account'ni tanlang${NC}"
+  info "     (SA project '${sa_project}' bilan bog'liq — app egasi)"
+  info "  2. Tanlangach, chap menyuda '${BOLD}Users and permissions${NC}' (yoki 'Пользователи и разрешения') ni oching"
+  info "  3. Service Account'ni toping: ${BOLD}${sa_email}${NC}"
+  info "     ${BOLD}AGAR TOPILMASA${NC} — bu noto'g'ri account! Boshqasiga o'ting va qaytadan urinib ko'ring"
+  info "  4. SA'ga bosing (qalam/edit ikoni)"
+  info "  5. ${BOLD}'App permissions' tabini oching${NC} (Account-level emas!)"
+  info "  6. ${BOLD}'Add app'${NC} bosing va ${BOLD}${package_name}${NC} loyihasini qo'shing"
+  info "  7. App'ning 'Releases' bo'limidan tanlang:"
   if [ "$track" = "production" ]; then
     info "     ✓ '${BOLD}Release to production, exclude devices...${NC}' (siz production'ga yuklamoqdasiz)"
   else
     info "     ✓ '${BOLD}Release apps to testing tracks${NC}' (siz ${track} track'iga yuklamoqdasiz)"
   fi
-  info "  7. 'Apply' va ${BOLD}sahifa tepasidagi 'Invite user'/'Save'${NC} bosing"
-  info "     ${BOLD}MUHIM:${NC} faqat 'Apply' kifoya emas — ${BOLD}'Save'${NC} ham bosishingiz shart"
-  info "  8. ${BOLD}5-10 daqiqa kuting${NC} (Google'da cache yangilanishi)"
+  info "  8. ${BOLD}'Apply'${NC} bosing (app permission qo'shildi)"
+  info "  9. ${BOLD}Sahifa pastidagi KO'K 'Сохранить изменения' / 'Save changes' bosing${NC}"
+  info " 10. ${BOLD}5-10 daqiqa kuting${NC} (Google'da cache yangilanishi)"
   echo
 
   # v1.13.5: 3 ta MUHIM tekshiruv (foydalanuvchilar 'Apply' bilan to'xtab qolishadi)
