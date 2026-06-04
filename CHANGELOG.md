@@ -5,6 +5,112 @@ Loyihaning barcha muhim o'zgarishlari shu faylga yoziladi.
 Format [Keep a Changelog](https://keepachangelog.com/uz/1.1.0/) asosida,
 versiyalash esa [Semantic Versioning](https://semver.org/lang/uz/) qoidasiga rioya qiladi.
 
+## [1.13.1] — 2026-06-04
+
+### Tuzatildi — Android Studio AAB topilmas edi + "Ikkalasi" rejimi graceful
+
+User report: "android studio orqali build qildim, va build bo'lgan ammo uploadda
+topolmadi" + "iosda umuman build qilinmagan bo'lsa ham upload bo'limi orqali
+ishimni bitirishim kerak"
+
+### Sabab
+
+Flutter CLI va Android Studio AAB'ni **boshqa-boshqa joylarga** yozadi:
+
+| Tool | AAB joy |
+|------|---------|
+| Flutter CLI (`flutter build appbundle`) | `build/app/outputs/bundle/release/` |
+| Android Studio (Generate Signed Bundle) | `android/app/build/outputs/bundle/release/` |
+
+v1.13.0 dagi `find_latest_aab` faqat birinchi joyga qaragan — Android Studio
+orqali build qilingan AAB topilmasdi. Bu **discovery bias** edi.
+
+### Multi-location qidiruv (specificity ladder)
+
+`find_latest_aab` endi 4 ta joydan qidiradi (eng aniq → eng keng):
+
+```
+1. build/app/outputs/bundle/release/app-release.aab           (Flutter CLI default)
+2. android/app/build/outputs/bundle/release/app-release.aab   (Android Studio default)
+3. build/app/outputs/bundle/*/                                (Flutter CLI flavor'lar)
+4. android/app/build/outputs/bundle/*/                        (Android Studio flavor'lar)
+```
+
+`find_latest_ipa` ham xuddi shunday:
+
+```
+1. build/ios/ipa/                          (Flutter CLI default)
+2. build/ios/iphoneos/                     (Flutter CLI eski versiyalar)
+3. ios/build/Build/Products/Release-*/     (Xcode build joyi)
+4. ./*.ipa                                  (loyiha ildizi — Xcode export)
+```
+
+### "Hozir nima qilamiz?" interaktiv yechim
+
+Artifact topilmasa, foydalanuvchiga aniq tanlovlar beriladi:
+
+```
+✗ AAB topilmadi
+
+Bizning skript quyidagi joylardan qidirdi:
+  1. build/app/outputs/bundle/release/        (Flutter CLI default)
+  2. android/app/build/outputs/bundle/release/ (Android Studio default)
+  3. build/app/outputs/bundle/*/              (Flutter CLI flavor'lar)
+  4. android/app/build/outputs/bundle/*/      (Android Studio flavor'lar)
+
+Hozir nima qilamiz?
+  1) Build qilamiz (Flutter CLI orqali — flutter build appbundle)
+  2) Android Studio'ni ochaman (qo'lda build qilaman)
+  3) Bekor qilish
+
+  Tanlang [1-3] [1]:
+```
+
+Variant 1: `main_build_flow` chaqiriladi (to'liq build wizard)
+Variant 2: Android Studio yo'lini ko'rsatadi (`open -a 'Android Studio' android`)
+
+### "Ikkalasi" rejimida graceful degradation
+
+User case: **"androidda build bor, iosda yo'q"**.
+
+v1.13.0 da: agar iOS IPA topilmasa, `upload_ios_only_flow` xato qaytarardi
+va butun "Ikkalasi" jarayoni yiqilardi.
+
+v1.13.1 da: har bir platforma **alohida** tekshiriladi:
+- Android AAB bor → upload
+- iOS IPA yo'q → skip (xato emas, "artifact not found, skipped")
+- Linux'da iOS → automatic skip (xcrun yo'q)
+
+Yakuniy hisobot:
+```
+════════════════════════════════════════
+Yakuniy hisobot:
+  ✓ Android: muvaffaqiyatli yuklandi
+  ⊘ iOS    : artifact topilmadi (skip)
+════════════════════════════════════════
+```
+
+Hech bo'lmasa bittasi muvaffaqiyatli bo'lsa, jarayon **muvaffaqiyatli** hisoblanadi.
+
+### Yangi helper
+
+`_report_upload_result` — har bir platforma natijasini kategoriyalaydi:
+- `0` — muvaffaqiyatli yuklandi (✓)
+- `1` — upload xato berdi (✗)
+- `2` — foydalanuvchi bekor qildi (-)
+- `3` — artifact topilmadi, skip (⊘)
+
+### Test natijalari
+
+7/7 unit test:
+- ✓ Android Studio AAB joy #2 topiladi (Flutter CLI yo'q bo'lsa)
+- ✓ Flutter CLI joy #1 ustivor (ikkalasi bor bo'lsa)
+- ✓ Android Studio flavor (joy #4) topiladi
+- ✓ AAB hech qaerda yo'q → exit 1
+- ✓ IPA Flutter CLI joy
+- ✓ IPA loyiha ildizidan (Xcode export)
+- ✓ IPA hech qaerda yo'q → exit 1
+
 ## [1.13.0] — 2026-06-04
 
 ### Qo'shildi — **Upload-only rejim** (build qilmasdan yuklash)
@@ -1336,6 +1442,7 @@ yangi yo'lni oladi (3 loyiha → 1 ta fayl tahriri).
 - AAB va APK formatlari, Production va Debug rejimlari.
 - Build natijalarini Finder'da avtomatik ochish.
 
+[1.13.1]: https://github.com/Jaloliddin-Fozilov/flutter-build-tool/releases/tag/v1.13.1
 [1.13.0]: https://github.com/Jaloliddin-Fozilov/flutter-build-tool/releases/tag/v1.13.0
 [1.12.7]: https://github.com/Jaloliddin-Fozilov/flutter-build-tool/releases/tag/v1.12.7
 [1.12.6]: https://github.com/Jaloliddin-Fozilov/flutter-build-tool/releases/tag/v1.12.6

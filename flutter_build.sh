@@ -22,7 +22,7 @@
 set -eo pipefail
 
 # ─── Skript ma'lumotlari ──────────────────────────────────
-SCRIPT_VERSION="1.13.0"
+SCRIPT_VERSION="1.13.1"
 SCRIPT_REPO="Jaloliddin-Fozilov/flutter-build-tool"
 SCRIPT_RAW_URL="https://raw.githubusercontent.com/${SCRIPT_REPO}/main/flutter_build.sh"
 
@@ -3096,16 +3096,57 @@ PLIST
   info "Agar manual signing kerak bo'lsa, signingStyle ni 'manual' ga o'zgartiring"
 }
 
-# IPA fayl yo'lini topish (build/ios/ipa/ dan)
+# IPA fayl yo'lini topish — multi-location qidirish.
+# Flutter CLI (`flutter build ipa`) va Xcode (Archive → Distribute App)
+# IPA'ni turli joylarga yozadi. v1.13.1: 4 ta joydan qidiradi.
+#
+#   1. Flutter CLI default:    build/ios/ipa/
+#   2. Flutter CLI ba'zi versiyalar: build/ios/iphoneos/
+#   3. Xcode build joyi:       ios/build/Build/Products/Release-iphoneos/
+#   4. Loyiha ildizi:          ./ (qo'lda export qilingan IPA)
 find_latest_ipa() {
-  local dir="build/ios/ipa"
-  [ ! -d "$dir" ] && return 1
-  # Eng yangi .ipa faylni topish (mtime bo'yicha)
+  # 1. Flutter CLI default
+  local d1="build/ios/ipa"
+  if [ -d "$d1" ]; then
+    local ipa
+    ipa=$(find "$d1" -maxdepth 1 -name "*.ipa" -type f 2>/dev/null | head -1)
+    if [ -n "$ipa" ]; then
+      printf '%s\n' "$ipa"
+      return 0
+    fi
+  fi
+
+  # 2. Flutter CLI ba'zi eski versiyalar
+  local d2="build/ios/iphoneos"
+  if [ -d "$d2" ]; then
+    local ipa
+    ipa=$(find "$d2" -maxdepth 1 -name "*.ipa" -type f 2>/dev/null | head -1)
+    if [ -n "$ipa" ]; then
+      printf '%s\n' "$ipa"
+      return 0
+    fi
+  fi
+
+  # 3. Xcode build joyi (agar Xcode orqali archive qilingan bo'lsa)
+  if [ -d "ios/build" ]; then
+    local ipa
+    ipa=$(find "ios/build" -maxdepth 5 -name "*.ipa" -type f 2>/dev/null | head -1)
+    if [ -n "$ipa" ]; then
+      printf '%s\n' "$ipa"
+      return 0
+    fi
+  fi
+
+  # 4. Loyiha ildizi (Xcode → Distribute App ko'pincha shu yerga yoki Desktop'ga
+  # export qiladi; biz ildizdagi *.ipa'ni topamiz, Desktop'ga zarar bermaymiz)
   local ipa
-  ipa=$(find "$dir" -maxdepth 1 -name "*.ipa" -type f 2>/dev/null \
-        | head -1)
-  [ -z "$ipa" ] && return 1
-  echo "$ipa"
+  ipa=$(find . -maxdepth 2 -name "*.ipa" -type f 2>/dev/null | head -1)
+  if [ -n "$ipa" ]; then
+    printf '%s\n' "$ipa"
+    return 0
+  fi
+
+  return 1
 }
 
 # v1.12.2: altool output'da xato pattern'larini aniqlash
@@ -4376,14 +4417,55 @@ play_increase_rollout() {
   ok "Production rollout endi ${new_pct}% (versionCode=${latest_vc})"
 }
 
-# Build natijasidan AAB faylini topish
+# Build natijasidan AAB faylini topish — multi-location qidirish.
+# Flutter CLI (`flutter build appbundle`) va Android Studio (Build → Generate
+# Signed Bundle) AAB'ni boshqa-boshqa joylarga yozadi. Bu funksiya 4 ta
+# joydan qidiradi (specificity ladder — eng aniq birinchi):
+#
+#   1. Flutter CLI default:    build/app/outputs/bundle/release/
+#   2. Android Studio default: android/app/build/outputs/bundle/release/
+#   3. Flutter CLI flavor:     build/app/outputs/bundle/*/
+#   4. Android Studio flavor:  android/app/build/outputs/bundle/*/
+#
+# v1.13.1: avval faqat (1) joyga qarardi — Android Studio orqali build
+# qilingan AAB topilmasdi. Endi 4 ta joydan qidiradi.
 find_latest_aab() {
-  local dir="build/app/outputs/bundle/release"
-  [ ! -d "$dir" ] && return 1
-  local aab
-  aab=$(find "$dir" -maxdepth 1 -name "*.aab" -type f 2>/dev/null | head -1)
-  [ -z "$aab" ] && return 1
-  echo "$aab"
+  # 1. Flutter CLI default
+  local p1="build/app/outputs/bundle/release/app-release.aab"
+  if [ -f "$p1" ]; then
+    printf '%s\n' "$p1"
+    return 0
+  fi
+
+  # 2. Android Studio default (Gradle standart yo'li)
+  local p2="android/app/build/outputs/bundle/release/app-release.aab"
+  if [ -f "$p2" ]; then
+    printf '%s\n' "$p2"
+    return 0
+  fi
+
+  # 3. Flutter CLI flavor (build/app/outputs/bundle/devRelease/, etc.)
+  local f
+  if [ -d "build/app/outputs/bundle" ]; then
+    f=$(find "build/app/outputs/bundle" -maxdepth 2 -name "*.aab" -type f 2>/dev/null \
+        | head -1)
+    if [ -n "$f" ]; then
+      printf '%s\n' "$f"
+      return 0
+    fi
+  fi
+
+  # 4. Android Studio flavor (android/app/build/outputs/bundle/devRelease/, etc.)
+  if [ -d "android/app/build/outputs/bundle" ]; then
+    f=$(find "android/app/build/outputs/bundle" -maxdepth 2 -name "*.aab" -type f 2>/dev/null \
+        | head -1)
+    if [ -n "$f" ]; then
+      printf '%s\n' "$f"
+      return 0
+    fi
+  fi
+
+  return 1
 }
 
 # JSON javobdan qiymat ekstraksiya qilish (oddiy parsing)
@@ -4641,6 +4723,23 @@ file_mtime_human() {
   fi
 }
 
+# v1.13.1: Upload natijasini hisobotga qo'shish (Ikkalasi rejimi uchun)
+# rc kodlari:
+#   0 — muvaffaqiyatli
+#   1 — xato berdi (artifact bor edi, lekin upload qilolmadi)
+#   2 — bekor qilindi (foydalanuvchi y/n da n bosdi)
+#   3 — artifact topilmadi (skip)
+_report_upload_result() {
+  local label="$1" rc="$2"
+  case "$rc" in
+    0) info "  ✓ ${label}: muvaffaqiyatli yuklandi" ;;
+    1) info "  ✗ ${label}: upload xato berdi" ;;
+    2) info "  - ${label}: foydalanuvchi bekor qildi" ;;
+    3) info "  ⊘ ${label}: artifact topilmadi (skip)" ;;
+    *) info "  ? ${label}: noma'lum holat (rc=$rc)" ;;
+  esac
+}
+
 # Asosiy upload-only oqimi — foydalanuvchi platforma tanlaydi, oxirgi artifact'ni
 # topib, akkaunt'ni resolve qilib, yuklaydi. Build qilmaydi.
 #
@@ -4681,15 +4780,54 @@ upload_only_flow() {
     1) upload_android_only_flow ;;
     2) upload_ios_only_flow ;;
     3)
-      # Android avval, keyin iOS — birinchisi xato bo'lsa ham ikkinchisini sinab ko'ramiz
-      upload_android_only_flow
-      local android_rc=$?
+      # v1.13.1: "Ikkalasi" rejimi — graceful degradation
+      # Har bir platforma alohida ishlatiladi. Birortasi xato bo'lsa ham, ikkinchisi davom etadi.
+      # Bu user case'i uchun: "androidda build bor, iosda yo'q" — Android uploadlanadi,
+      # iOS skip qilinadi, batafsil hisobot beriladi.
+      local android_rc=2 ios_rc=2  # 2 = "skipped" (default — agar foydalanuvchi yo'q desa)
+
+      info "▶ Android upload boshlanmoqda..."
       echo
-      info "─── iOS upload boshlanmoqda ───"
-      upload_ios_only_flow
-      local ios_rc=$?
-      [ $android_rc -eq 0 ] && [ $ios_rc -eq 0 ]
-      return $?
+      if find_latest_aab > /dev/null 2>&1; then
+        upload_android_only_flow
+        android_rc=$?
+      else
+        warn "Android AAB topilmadi — bu platforma o'tkazib yuboriladi"
+        info "(qidirilgan joylar pastda upload_android_only_flow ko'rsatadi)"
+        android_rc=3  # 3 = "not found, skipped"
+      fi
+
+      echo
+      echo "────────────────────────────────────────"
+      info "▶ iOS upload boshlanmoqda..."
+      echo
+      if [ "$(uname)" != "Darwin" ]; then
+        warn "iOS upload faqat macOS'da ishlaydi — bu platforma o'tkazib yuboriladi"
+        ios_rc=3
+      elif find_latest_ipa > /dev/null 2>&1; then
+        upload_ios_only_flow
+        ios_rc=$?
+      else
+        warn "iOS IPA topilmadi — bu platforma o'tkazib yuboriladi"
+        info "(qidirilgan joylar pastda upload_ios_only_flow ko'rsatadi)"
+        ios_rc=3
+      fi
+
+      # Hisobot
+      echo
+      echo "════════════════════════════════════════"
+      info "${BOLD}Yakuniy hisobot:${NC}"
+      _report_upload_result "Android" "$android_rc"
+      _report_upload_result "iOS    " "$ios_rc"
+      echo "════════════════════════════════════════"
+      echo
+
+      # Hech bo'lmasa bittasi muvaffaqiyatli bo'lsa — return 0
+      if [ $android_rc -eq 0 ] || [ $ios_rc -eq 0 ]; then
+        return 0
+      fi
+      # Ikkalasi ham skip yoki xato bo'lsa — return 1
+      return 1
       ;;
     b|B)
       return 0
@@ -4706,20 +4844,48 @@ upload_only_flow() {
 upload_android_only_flow() {
   banner "Android — oxirgi AAB'ni yuklash"
 
-  # Oxirgi AAB'ni topish
+  # Oxirgi AAB'ni topish (multi-location: Flutter CLI + Android Studio)
   local aab
   aab=$(find_latest_aab 2>/dev/null) || {
     err "AAB topilmadi"
     echo
-    info "Bizning skript ${BOLD}build/app/outputs/bundle/release/${NC} ichidan qidiradi"
-    info "Bu papka bo'sh — demak hech qachon Android production build qilinmagan"
+    info "Bizning skript quyidagi joylardan qidirdi:"
+    info "  1. ${BOLD}build/app/outputs/bundle/release/${NC}        (Flutter CLI default)"
+    info "  2. ${BOLD}android/app/build/outputs/bundle/release/${NC} (Android Studio default)"
+    info "  3. ${BOLD}build/app/outputs/bundle/*/${NC}              (Flutter CLI flavor'lar)"
+    info "  4. ${BOLD}android/app/build/outputs/bundle/*/${NC}      (Android Studio flavor'lar)"
     echo
-    info "${BOLD}Yechim:${NC}"
-    try_this \
-      "flutter-build   # Build → Production → Android tanlang" \
-      "# Bir marta build qilingach, keyinchalik shu menu orqali tezda upload"
-    pause
-    return 1
+    info "${BOLD}Hozir nima qilamiz?${NC}"
+    echo -e "    ${CYAN}1${NC}) Build qilamiz (Flutter CLI orqali — flutter build appbundle)"
+    echo -e "    ${CYAN}2${NC}) Android Studio'ni ochaman (qo'lda build qilaman)"
+    echo -e "    ${CYAN}3${NC}) Bekor qilish"
+    echo
+    local choice
+    read -p "  Tanlang [1-3] [1]: " choice
+    case "${choice:-1}" in
+      1)
+        echo
+        info "Build flow boshlanmoqda — keyin upload qilamiz"
+        if main_build_flow; then
+          return 0
+        else
+          warn "Build muvaffaqiyatsiz tugadi"
+          return 1
+        fi
+        ;;
+      2)
+        info "Android Studio'ni oching va: Build → Generate Signed Bundle / APK → Bundle"
+        try_this \
+          "open -a 'Android Studio' android   # Android Studio'da android/ papka'ni ochish" \
+          "# Build tugagach, shu menu'ga qayting va Upload'ni qaytadan tanlang"
+        pause
+        return 1
+        ;;
+      *)
+        info "Bekor qilindi"
+        return 1
+        ;;
+    esac
   }
 
   # AAB ma'lumotlari
@@ -4849,20 +5015,49 @@ upload_ios_only_flow() {
     return 1
   fi
 
-  # Oxirgi IPA
+  # Oxirgi IPA (multi-location: Flutter CLI + Xcode)
   local ipa
   ipa=$(find_latest_ipa 2>/dev/null) || {
     err "IPA topilmadi"
     echo
-    info "Bizning skript ${BOLD}build/ios/ipa/${NC} ichidan qidiradi"
-    info "Bu papka bo'sh — demak hech qachon iOS production build qilinmagan"
+    info "Bizning skript quyidagi joylardan qidirdi:"
+    info "  1. ${BOLD}build/ios/ipa/${NC}                          (Flutter CLI default)"
+    info "  2. ${BOLD}build/ios/iphoneos/${NC}                     (Flutter CLI eski versiyalar)"
+    info "  3. ${BOLD}ios/build/${NC}                              (Xcode build joyi)"
+    info "  4. ${BOLD}./${NC}                                      (loyiha ildizi)"
     echo
-    info "${BOLD}Yechim:${NC}"
-    try_this \
-      "flutter-build   # Build → Production → iOS tanlang" \
-      "# Bir marta build qilingach, keyinchalik shu menu orqali tezda upload"
-    pause
-    return 1
+    info "${BOLD}Hozir nima qilamiz?${NC}"
+    echo -e "    ${CYAN}1${NC}) Build qilamiz (Flutter CLI orqali — flutter build ipa)"
+    echo -e "    ${CYAN}2${NC}) Xcode'ni ochaman (qo'lda Archive → Distribute App)"
+    echo -e "    ${CYAN}3${NC}) Bekor qilish"
+    echo
+    local choice
+    read -p "  Tanlang [1-3] [1]: " choice
+    case "${choice:-1}" in
+      1)
+        echo
+        info "Build flow boshlanmoqda — keyin upload qilamiz"
+        if main_build_flow; then
+          return 0
+        else
+          warn "Build muvaffaqiyatsiz tugadi"
+          return 1
+        fi
+        ;;
+      2)
+        info "Xcode'ni oching: Product → Archive, keyin Window → Organizer → Distribute App"
+        try_this \
+          "open ios/Runner.xcworkspace   # Xcode'da loyihani ochish" \
+          "# Archive qilingach, Distribute App → App Store Connect → Export" \
+          "# Export qilinganidan keyin shu menu'ga qaytib Upload'ni tanlang"
+        pause
+        return 1
+        ;;
+      *)
+        info "Bekor qilindi"
+        return 1
+        ;;
+    esac
   }
 
   # IPA ma'lumotlari
