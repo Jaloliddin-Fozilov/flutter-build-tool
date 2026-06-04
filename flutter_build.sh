@@ -22,7 +22,7 @@
 set -eo pipefail
 
 # ─── Skript ma'lumotlari ──────────────────────────────────
-SCRIPT_VERSION="1.13.8"
+SCRIPT_VERSION="1.13.9"
 SCRIPT_REPO="Jaloliddin-Fozilov/flutter-build-tool"
 SCRIPT_RAW_URL="https://raw.githubusercontent.com/${SCRIPT_REPO}/main/flutter_build.sh"
 
@@ -4799,102 +4799,90 @@ play_handle_commit_403() {
   esac
 }
 
-# v1.13.4: API orqali SA permission'ini sinab ko'rish (3 ta test)
-# Foydalanuvchiga aniq aytadi: nima ishlaydi, nima ishlamaydi, sababi nima
+# v1.13.9: API orqali SA permission'ini sinab ko'rish
+# MUHIM TUZATISH: avval GET /applications/{package} ishlatardik — bu Google Play
+# API'da HAQIQIY ENDPOINT EMAS, doim 404 qaytaradi! Bu foydalanuvchini "noto'g'ri
+# account" deb XATO yo'naltirardi. To'g'ri signal: POST /edits.
+#   - POST /edits 200  = SA app'ni KO'RA OLADI (edit yarata oladi)
+#   - POST /edits 403/404 = SA app'ga kira olmaydi (noto'g'ri account/link yo'q)
+#   - commit 403 (alohida) = release permission yo'q (lekin app access bor)
 _play_403_run_api_diagnostic() {
   local api_base="$1" token="$2" package_name="$3" sa_email="$4" track="$5"
 
   echo
-  step "SA permission'ini API orqali tekshirish (3 ta test)"
+  step "SA permission'ini API orqali tekshirish"
   echo
 
-  # Test 1: App metadata o'qish (GET /apps/{package})
-  # 200 = SA app'ni ko'ra oladi (view permission)
-  local code1
-  code1=$(curl -sS -X GET "${api_base}" \
-    -H "Authorization: Bearer ${token}" \
-    -o /dev/null -w '%{http_code}' 2>/dev/null)
-  if [ "$code1" = "200" ]; then
-    ok "[1/3] App ko'rish (GET app): HTTP ${BOLD}200${NC} — SA app'ni ko'ra oladi"
-  else
-    err "[1/3] App ko'rish (GET app): HTTP ${BOLD}${code1}${NC} — SA app'ni ko'ra olmaydi"
-  fi
-
-  # Test 2: Yangi (test) edit yaratish
-  # 200 = SA edit yarata oladi
-  local edit_test_resp code2
+  # Yagona ishonchli test: edit yaratish (real endpoint)
+  # 200 = SA app'ga kira oladi; 403/404 = kira olmaydi
+  local edit_test_resp code_edit
   edit_test_resp=$(curl -sS -X POST "${api_base}/edits" \
     -H "Authorization: Bearer ${token}" \
     -H "Content-Type: application/json" \
     -d '{}' -w '\nHTTP_CODE:%{http_code}' 2>/dev/null)
-  code2=$(echo "$edit_test_resp" | grep '^HTTP_CODE:' | cut -d: -f2)
-  if [ "$code2" = "200" ]; then
-    ok "[2/3] Yangi edit yaratish: HTTP ${BOLD}200${NC} — SA edit yarata oladi"
-    # Test edit'ni discard qilamiz (cleanup)
+  code_edit=$(echo "$edit_test_resp" | grep '^HTTP_CODE:' | cut -d: -f2)
+
+  # Cleanup: test edit yaratilgan bo'lsa, o'chiramiz
+  if [ "$code_edit" = "200" ]; then
     local test_eid
     test_eid=$(echo "$edit_test_resp" | grep -v '^HTTP_CODE:' | extract_json_field "id" 2>/dev/null)
     if [ -n "$test_eid" ]; then
       curl -sS -X DELETE "${api_base}/edits/${test_eid}" \
         -H "Authorization: Bearer ${token}" > /dev/null 2>&1 || true
     fi
-  else
-    err "[2/3] Yangi edit yaratish: HTTP ${BOLD}${code2}${NC}"
   fi
 
-  # Test 3: Bizning test edit ID orqali commit'ni sinab ko'rish (foydalanuvchi'ning haqiqiy edit'iga zarar bermaslik uchun)
-  # Bu yagona yo'l — production commit endpointini sinab ko'rishi
-  # Lekin biz commit qilmaymiz, faqat statusni ko'ramiz
-  info "[3/3] Commit endpointi haqiqiy edit bilan tekshirildi (yuqorida 403 berdi)"
+  local sa_project
+  sa_project=$(_extract_sa_project "$sa_email")
 
   echo
   info "${BOLD}Diagnostika xulosasi:${NC}"
-  if [ "$code1" = "200" ] && [ "$code2" = "200" ]; then
-    info "  ✓ SA app'ni ko'ra oladi"
-    info "  ✓ SA yangi edit yarata oladi"
-    info "  ✗ Lekin SA commit qila olmaydi (operation-specific 403)"
-    echo
-    info "Bu MAXSUS '${BOLD}Release apps to testing tracks${NC}' (yoki 'Release to production')"
-    info "permission'ining yo'qligi — boshqa permission'lar bor, lekin shu emas."
-    echo
-    warn "${BOLD}Eng tez yechim:${NC} Variant 3 (Play Console UI orqali qo'lda upload)"
-    info "  Bu API permission'ga bog'liq emas — sizning ${BOLD}shaxsiy Google account${NC}"
-    info "  orqali to'g'ridan-to'g'ri upload qilasiz, 3-5 daqiqada tugaydi"
-    return 0  # diagnostic suggests Variant 3
-  elif [ "$code1" != "200" ]; then
-    info "  ✗ SA app'ni umuman ko'ra olmaydi"
-    echo
 
-    # v1.13.7: 404 vs 403 farqi muhim signal
-    if [ "$code1" = "404" ]; then
-      info "${BOLD}HTTP 404 — bu MUHIM signal:${NC}"
-      info "  • 404 = app umuman ko'rinmaydi (boshqa Play Console account'da)"
-      info "  • 403 = app ko'rinadi lekin permission yo'q"
-      info "  • Siz oldingi 'Admin retry' qadamida ${BOLD}NOTO'G'RI account'da permission qo'shgansiz${NC}!"
-      echo
+  if [ "$code_edit" = "200" ]; then
+    # SA app'ga kira oladi (edit yarata oladi), lekin commit 403 berdi
+    ok "  ✓ SA app'ni ko'ra oladi va edit yarata oladi (POST /edits: 200)"
+    info "  ✓ Demak SA TO'G'RI account'da — app'ga ulangan"
+    err "  ✗ Lekin commit (release) qila olmaydi — 403"
+    echo
+    info "${BOLD}Aniq sabab:${NC} SA'da MAXSUS '${BOLD}release${NC}' ruxsati yo'q"
+    info "Boshqa ruxsat'lar bor (edit, upload), lekin 'release' alohida kerak:"
+    if [ "$track" = "production" ]; then
+      info "  → '${BOLD}Release to production${NC}'"
+    else
+      info "  → '${BOLD}Release apps to testing tracks${NC}' (${track} uchun)"
     fi
+    echo
+    info "${BOLD}Nega oldingi retry ishlamadi (3 ehtimol):${NC}"
+    info "  1. 'Save changes' bosilmagan (faqat 'Apply' kifoya emas)"
+    info "  2. Cache hali yangilanmagan (10-30 daqiqa kerak bo'lishi mumkin)"
+    info "  3. Permission app-level emas, account-level qo'shilgan (noto'g'ri tab)"
+    echo
+    warn "${BOLD}ENG TEZ yechim:${NC} Variant 3 (Manual UI upload) — API permission kerak emas"
+    info "  Sizning ${BOLD}shaxsiy Google account${NC} orqali browser'da upload qilasiz"
+    info "  (siz app'ga developer/admin sifatida kira olasiz — shuning uchun ishlaydi)"
+    return 0
 
-    local sa_project
-    sa_project=$(_extract_sa_project "$sa_email")
+  elif [ "$code_edit" = "404" ] || [ "$code_edit" = "403" ]; then
+    err "  ✗ SA app'ga kira olmaydi (POST /edits: ${code_edit})"
+    echo
+    info "Bu degani: SA '${BOLD}${package_name}${NC}' app'iga ulanmagan"
+    info "SA project: ${BOLD}${sa_project}${NC}"
+    echo
+    info "${BOLD}Sabab'lar:${NC}"
+    info "  1. SA noto'g'ri Play Console account'da (multi-account)"
+    info "     Account selector: ${BOLD}https://play.google.com/console/u/0/developers${NC}"
+    info "  2. SA app'ga permission qo'shilmagan"
+    echo
+    warn "${BOLD}ENG TEZ yechim:${NC} Variant 3 (Manual UI upload) — SA umuman kerak emas"
+    return 1
 
-    info "${BOLD}Sabab'lar va yechimlar:${NC}"
-    info "  1. ${BOLD}SA boshqa Play Console account'iga link qilingan${NC} (eng tez-tez)"
-    info "     Sizning SA project: ${BOLD}${sa_project}${NC}"
-    info "     Bu project bilan bog'liq Play Console account topish kerak"
-    info "     (masalan: agar project 'rentmi-b2fb6' bo'lsa, RENTME account'ga o'ting)"
+  else
+    warn "  ? Kutilmagan HTTP kod: ${code_edit}"
+    info "  Edit yaratish javobi: $(echo "$edit_test_resp" | grep -v '^HTTP_CODE:' | head -2)"
     echo
-    info "  2. ${BOLD}Multi-account ro'yxati${NC} — to'g'risini tanlash:"
-    info "     ${BOLD}https://play.google.com/console/u/0/developers${NC}  ← account selector"
-    info "     Bu yerdan ${BOLD}SHAXSIY account emas${NC}, balki app egasi account'ni tanlang"
-    info "     (Sizning ssenariy: shaxsiy account 'Jaloliddin Fozilov' emas, RENTME yoki kompaniya nomi)"
-    echo
-    info "  3. SA Play Console'ga umuman link qilinmagan (kam ehtimol — chunki edit yaratish ishladi)"
-    info "     Yechim: Setup → API access → 'Link existing Google Cloud project'"
-    echo
-    info "${BOLD}TAVSIYA:${NC} Variant 3 (Manual UI upload) — bu API permission'siz ishlaydi"
-    info "  Sizning Google account orqali to'g'ridan-to'g'ri Play Console'da upload qilasiz"
-    return 1  # diagnostic shows SA is unrelated
+    warn "${BOLD}TAVSIYA:${NC} Variant 3 (Manual UI upload) — eng ishonchli yo'l"
+    return 0
   fi
-  return 0
 }
 
 # v1.13.7: SA email'dan Google Cloud project nomini ekstrakt qilish
@@ -5165,6 +5153,24 @@ _play_403_manual_ui_upload() {
   echo
   info "Bu jarayonda permission'ga ehtiyoj yo'q — to'g'ridan-to'g'ri Google account orqali"
   info "AAB allaqachon bizning skript tomonidan to'g'ri build qilingan ($([ -f "$aab_path" ] && du -h "$aab_path" | cut -f1))"
+
+  # v1.13.9: Global flag — caller "upload xato" ko'rsatmasligi uchun
+  # (manual upload — bu xato emas, balki boshqa jarayon)
+  PLAY_MANUAL_UPLOAD_INITIATED=true
+
+  echo
+  info "${BOLD}Browser'da upload'ni yakunlang.${NC} Bu skript endi kutmaydi —"
+  info "siz browser'da 'Start rollout' bosganingizda, ish tugaydi."
+  echo
+  local done_manual
+  read -p "  Browser'da upload'ni yakunladingizmi? (ha/keyinroq) [keyinroq]: " done_manual
+  if [[ "$done_manual" =~ ^(ha|y|yes|ok|tugadi)$ ]]; then
+    ok "Ajoyib! Play Console'da release yaratildi."
+    info "Internal track'ga 1-2 daqiqada, beta/production'ga 1-2 soatda paydo bo'ladi"
+  else
+    info "Yaxshi — browser'da o'z vaqtingizda yakunlang."
+    info "Sahifa: ${BOLD}https://play.google.com/console/u/0/developers/-/app/${package}/tracks/${track}${NC}"
+  fi
 }
 
 # Variant 4: Edit ID'ni saqlab, keyinroq qo'lda commit (yoki bizning skript orqali retry)
@@ -5751,6 +5757,8 @@ upload_android_only_flow() {
   fi
 
   # Upload — mavjud play_publish funksiyasi
+  # v1.13.9: PLAY_MANUAL_UPLOAD_INITIATED flag'ini reset qilamiz
+  PLAY_MANUAL_UPLOAD_INITIATED=false
   if upload_to_play_store "$aab"; then
     # Promotion taklif (faqat internal/alpha/beta uchun ma'noli)
     if [ "$track" != "production" ]; then
@@ -5760,6 +5768,13 @@ upload_android_only_flow() {
     ok "Android upload muvaffaqiyatli yakunlandi"
     return 0
   else
+    # v1.13.9: agar manual UI upload tanlangan bo'lsa, bu xato emas
+    if [ "${PLAY_MANUAL_UPLOAD_INITIATED:-false}" = "true" ]; then
+      echo
+      info "📋 Manual upload Play Console'da boshlandi (API o'rniga)"
+      info "Browser'da release'ni yakunlang — bu skript ishini tugatdi"
+      return 0
+    fi
     echo
     warn "Android upload xato berdi — AAB hali ham mavjud: $aab"
     info "Qayta urinib ko'rish uchun shu menu'ga qaytib keling"
@@ -6514,10 +6529,16 @@ if $DO_PLAYSTORE_UPLOAD; then
   # v1.12.3: faqat muvaffaqiyatli upload'dan keyin promote taklif qilamiz.
   # Avval `|| warn ...` ishlatardik — bu promotion'ni hatto upload xato bo'lganda
   # ham chaqirardi va user "internal track'da release topilmadi" xatosini olardi.
+  # v1.13.9: manual UI upload tanlangan bo'lsa, bu xato emas
   local play_upload_ok=true
+  PLAY_MANUAL_UPLOAD_INITIATED=false
   upload_to_play_store "$aab_file" || {
-    warn "Upload xato berdi — AAB fayl saqlangan: $aab_file"
-    info "Promotion taklif qilinmaydi (chunki upload bo'lmadi)"
+    if [ "${PLAY_MANUAL_UPLOAD_INITIATED:-false}" = "true" ]; then
+      info "📋 Manual upload Play Console'da boshlandi — browser'da yakunlang"
+    else
+      warn "Upload xato berdi — AAB fayl saqlangan: $aab_file"
+      info "Promotion taklif qilinmaydi (chunki upload bo'lmadi)"
+    fi
     play_upload_ok=false
   }
 

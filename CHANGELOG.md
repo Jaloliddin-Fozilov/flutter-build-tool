@@ -5,6 +5,100 @@ Loyihaning barcha muhim o'zgarishlari shu faylga yoziladi.
 Format [Keep a Changelog](https://keepachangelog.com/uz/1.1.0/) asosida,
 versiyalash esa [Semantic Versioning](https://semver.org/lang/uz/) qoidasiga rioya qiladi.
 
+## [1.13.9] — 2026-06-04
+
+### Tuzatildi — **Soxta 404 diagnostika** foydalanuvchini xato yo'naltirardi
+
+User report: foydalanuvchi `jaloliddinish@gmail.com` orqali RENTME account'ga
+**developer/admin** sifatida qo'shilgan. Diagnostika `HTTP 404` ko'rsatib,
+"SA noto'g'ri account'da" deb **xato xulosa** chiqardi. Aslida SA TO'G'RI
+account'da edi.
+
+### Root cause — Google Play API'da bo'lmagan endpoint
+
+Diagnostika test [1/3] `GET /applications/{package}` ishlatardi:
+
+```bash
+curl -X GET "https://androidpublisher.googleapis.com/.../applications/${pkg}"
+```
+
+Bu Google Play Developer API v3'da **HAQIQIY ENDPOINT EMAS** — har doim
+`404` qaytaradi! API'da faqat sub-resource'lar bor:
+- `POST /applications/{pkg}/edits` ✓ (edit yaratish)
+- `GET /applications/{pkg}/edits/{id}` ✓ (edit o'qish)
+- `GET /applications/{pkg}` ✗ (bunday endpoint yo'q)
+
+Natijada diagnostika **har doim** 404 ko'rsatib, foydalanuvchini "noto'g'ri
+account" deb xato yo'naltirardi.
+
+### Fix — POST /edits ni ishonchli signal sifatida ishlatish
+
+Foydalanuvchining real natijasi:
+```
+✓ [2/3] Yangi edit yaratish: HTTP 200 — SA edit yarata oladi
+```
+
+`POST /edits` 200 = **SA app'ni KO'RA OLADI** (to'g'ri account!). Yangi
+diagnostika shu signal'ni ishlatadi:
+
+```
+Diagnostika xulosasi:
+  ✓ SA app'ni ko'ra oladi va edit yarata oladi (POST /edits: 200)
+  ✓ Demak SA TO'G'RI account'da — app'ga ulangan
+  ✗ Lekin commit (release) qila olmaydi — 403
+
+Aniq sabab: SA'da MAXSUS 'release' ruxsati yo'q
+  → 'Release apps to testing tracks' (internal uchun)
+
+Nega oldingi retry ishlamadi (3 ehtimol):
+  1. 'Save changes' bosilmagan (faqat 'Apply' kifoya emas)
+  2. Cache hali yangilanmagan (10-30 daqiqa kerak bo'lishi mumkin)
+  3. Permission app-level emas, account-level qo'shilgan (noto'g'ri tab)
+
+ENG TEZ yechim: Variant 3 (Manual UI upload) — API permission kerak emas
+```
+
+### Tuzatildi — Manual UI upload'dan keyin "upload xato" ko'rsatilmaydi
+
+User Variant 3 (Manual UI) tanladi, lekin skript keyin **"Android upload xato
+berdi"** ko'rsatardi — bu chalg'ituvchi (manual upload — xato emas, boshqa
+jarayon).
+
+Endi `PLAY_MANUAL_UPLOAD_INITIATED` global flag:
+```
+📋 Manual upload Play Console'da boshlandi (API o'rniga)
+Browser'da release'ni yakunlang — bu skript ishini tugatdi
+```
+
+Plus Manual UI'da yakuniy tasdiqlash:
+```
+Browser'da upload'ni yakunlang. Bu skript endi kutmaydi —
+siz browser'da 'Start rollout' bosganingizda, ish tugaydi.
+
+  Browser'da upload'ni yakunladingizmi? (ha/keyinroq) [keyinroq]: ha
+✓ Ajoyib! Play Console'da release yaratildi.
+```
+
+### Sizning vaziyatingiz uchun (personal account)
+
+Siz "shaxsiy akkauntdan yuklash kerak, ownerdan emas" dedingiz. To'g'ri
+yechim — **Variant 3 (Manual UI upload)**:
+- Sizning shaxsiy Google account (browser login) ishlatadi
+- Service Account (owner'niki) umuman kerak emas
+- Siz app'ga developer/admin sifatida kira olasiz — shuning uchun ishlaydi
+
+### Texnik tafsilot
+
+**API endpoint verification**: REST API diagnostikasi qilishda, **faqat
+mavjud endpoint'larni** sinab ko'rish kerak. Bizning eski test bo'lmagan
+endpoint'ni sinab, soxta 404 oldi. Bu **false negative** — diagnostika'ning
+o'zi bug edi. To'g'ri yondashuv: **real operatsiyalar** (POST /edits) bilan
+test qilish.
+
+**404 vs 403 semantics**: 404 "topilmadi", 403 "ruxsat yo'q". Lekin bizning
+holatda 404 **endpoint mavjud emasligidan** edi, app yo'qligidan emas. Bu
+HTTP code'larni kontekstsiz talqin qilish xavfini ko'rsatadi.
+
 ## [1.13.8] — 2026-06-04
 
 ### Tuzatildi — `find_keytool` har bir yo'lni FUNCTIONAL validatsiya qiladi
@@ -2144,6 +2238,7 @@ yangi yo'lni oladi (3 loyiha → 1 ta fayl tahriri).
 - AAB va APK formatlari, Production va Debug rejimlari.
 - Build natijalarini Finder'da avtomatik ochish.
 
+[1.13.9]: https://github.com/Jaloliddin-Fozilov/flutter-build-tool/releases/tag/v1.13.9
 [1.13.8]: https://github.com/Jaloliddin-Fozilov/flutter-build-tool/releases/tag/v1.13.8
 [1.13.7]: https://github.com/Jaloliddin-Fozilov/flutter-build-tool/releases/tag/v1.13.7
 [1.13.6]: https://github.com/Jaloliddin-Fozilov/flutter-build-tool/releases/tag/v1.13.6
