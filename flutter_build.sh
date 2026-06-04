@@ -22,7 +22,7 @@
 set -eo pipefail
 
 # ─── Skript ma'lumotlari ──────────────────────────────────
-SCRIPT_VERSION="1.13.5"
+SCRIPT_VERSION="1.13.6"
 SCRIPT_REPO="Jaloliddin-Fozilov/flutter-build-tool"
 SCRIPT_RAW_URL="https://raw.githubusercontent.com/${SCRIPT_REPO}/main/flutter_build.sh"
 
@@ -2223,31 +2223,206 @@ create_new_keystore() {
 }
 
 # Mavjud keystoreni ulash (foydalanuvchi yo'lini va parollarini kiritadi)
+# v1.13.6: Smart keystore yo'lini hal qilish — kengaytma'lar va papka qidiruvi
+# Foydalanuvchi `key` deb yozsa, biz `key.jks`, `key.keystore` ham sinab ko'ramiz.
+# Agar papka berilsa, ichidagi keystore fayl'larni topib ko'rsatamiz.
+#
+# Returns: 0 + stdout yangi yo'l, 1 + stderr xato
+_resolve_keystore_path() {
+  local input="$1"
+  # Tilde expansion
+  input="${input/#\~/$HOME}"
+
+  # 1. To'g'ridan-to'g'ri fayl
+  if [ -f "$input" ]; then
+    printf '%s\n' "$input"
+    return 0
+  fi
+
+  # 2. Kengaytma qo'shib sinab ko'rish (eng tez-tez)
+  local ext
+  for ext in .jks .keystore .pk12 .p12; do
+    if [ -f "${input}${ext}" ]; then
+      info "Kengaytma avtomatik qo'shildi: ${BOLD}${ext}${NC}" >&2
+      printf '%s\n' "${input}${ext}"
+      return 0
+    fi
+  done
+
+  # 3. Papka bo'lsa — ichidagi keystore'larni topish
+  if [ -d "$input" ]; then
+    info "'$input' — papka. Ichida keystore qidirilmoqda..." >&2
+    local candidates count
+    candidates=$(find "$input" -maxdepth 3 -type f \
+      \( -name "*.jks" -o -name "*.keystore" -o -name "*.pk12" -o -name "*.p12" \) 2>/dev/null)
+    if [ -z "$candidates" ]; then
+      err "Bu papka ichida keystore fayli (.jks/.keystore/.p12) topilmadi" >&2
+      info "Papka ichidagi fayllar:" >&2
+      ls -la "$input" 2>/dev/null | head -15 >&2
+      return 1
+    fi
+
+    count=$(echo "$candidates" | wc -l | tr -d ' ')
+    if [ "$count" = "1" ]; then
+      ok "Avtomatik topildi: ${BOLD}${candidates}${NC}" >&2
+      printf '%s\n' "$candidates"
+      return 0
+    fi
+
+    # Bir nechta — foydalanuvchidan tanlash
+    echo >&2
+    info "Bir nechta keystore topildi:" >&2
+    local i=1 line
+    while IFS= read -r line; do
+      echo "    ${i}) ${line}" >&2
+      i=$((i + 1))
+    done <<< "$candidates"
+    echo >&2
+    local sel
+    read -p "    Qaysi birini tanlaysiz (raqam): " sel </dev/tty
+    local selected
+    selected=$(echo "$candidates" | sed -n "${sel}p")
+    if [ -z "$selected" ] || [ ! -f "$selected" ]; then
+      err "Noto'g'ri tanlov: $sel" >&2
+      return 1
+    fi
+    printf '%s\n' "$selected"
+    return 0
+  fi
+
+  # 4. Hech narsa topilmadi
+  err "Fayl yoki papka topilmadi: $input" >&2
+  info "Tekshiring: ${BOLD}ls -la \"$(dirname "$input" 2>/dev/null || echo "$HOME")\"${NC}" >&2
+  return 1
+}
+
 link_existing_keystore() {
   step "Mavjud keystoreni ulash"
 
-  local kpath al sp kp
-  read -p "    Keystore fayliga to'liq yo'l: " kpath
-  if [ ! -f "$kpath" ]; then
-    err "Fayl topilmadi: $kpath"
+  local kpath al sp kp raw_path
+  read -p "    Keystore fayliga to'liq yo'l: " raw_path
+
+  # v1.13.6: Smart path resolution (kengaytma, papka, tilde)
+  kpath=$(_resolve_keystore_path "$raw_path") || {
+    err "Keystore yo'lini hal qilib bo'lmadi"
+    return 1
+  }
+
+  # v1.13.6: keytool topish — agar yo'q bo'lsa, qisqartirilgan workflow
+  local lk_bin
+  lk_bin=$(find_keytool)
+  if [ -z "$lk_bin" ]; then
+    warn "keytool topilmadi — keystore tekshirib bo'lmaydi (skip mode)"
+    info "Keystore baribir ulanadi, lekin parol/alias to'g'riligi build vaqtida bilinadi"
+    echo
+    read -p "    Key alias: " al
+    read -s -p "    Keystore parol: " sp; echo
+    read -s -p "    Key parol [keystore parol bilan bir xil]: " kp; echo
+    kp="${kp:-$sp}"
+    write_key_properties "$sp" "$kp" "$al" "$kpath"
+    ensure_gitignore_for_keys
+    ensure_gradle_signing_config
+    return 0
+  fi
+
+  # v1.13.6: Avval keystore parol'ini test qilamiz (alias'siz)
+  # Bu bizga 3 ta narsa beradi: (a) parol to'g'rimi, (b) format to'g'rimi, (c) alias'lar ro'yxati
+  read -s -p "    Keystore parol: " sp; echo
+
+  echo
+  step "Keystore o'qilmoqda (parol va format tekshiruvi)..."
+  local keystore_test rc
+  keystore_test=$("$lk_bin" -list -keystore "$kpath" -storepass "$sp" 2>&1)
+  rc=$?
+
+  if [ $rc -ne 0 ]; then
+    err "Keystore'ni o'qib bo'lmadi"
+    echo
+    # Aniq sabab'ni topish (pattern-based)
+    if echo "$keystore_test" | grep -qiE "password was incorrect|keystore password was incorrect|Keystore was tampered"; then
+      info "${BOLD}Sabab:${NC} Keystore paroli NOTO'G'RI"
+      info "Aniq xato xabari:"
+      echo "$keystore_test" | head -3 | sed 's/^/    /'
+      echo
+      info "Yechim'lar:"
+      info "  1. Parolingizni qayta tekshiring (caps lock, klaviatura tili)"
+      info "  2. Boshqa parol urinib ko'ring"
+      info "  3. Keystore yaratilganda yozib qo'ygan parol fayli bo'lsa qarang"
+    elif echo "$keystore_test" | grep -qiE "Invalid keystore format|magic number|not a Java keystore"; then
+      info "${BOLD}Sabab:${NC} Fayl JKS/PKCS12 format emas"
+      info "Fayl ma'lumotlari:"
+      file "$kpath" 2>/dev/null | sed 's/^/    /'
+      info "Yechim: to'g'ri keystore fayl yo'lini kiriting (.jks yoki .keystore)"
+    elif echo "$keystore_test" | grep -qiE "FileNotFoundException|NoSuchFileException"; then
+      info "${BOLD}Sabab:${NC} Fayl mavjud emas (lekin biz uni topgan edik — g'alati holat)"
+      info "Yo'l: $kpath"
+    else
+      info "${BOLD}Sabab:${NC} aniq emas — keytool javobi:"
+      echo "$keystore_test" | head -5 | sed 's/^/    /'
+    fi
     return 1
   fi
 
+  ok "Keystore o'qildi — parol to'g'ri va format JKS/PKCS12"
+
+  # Mavjud alias'larni ekstrakt qilish
+  # keytool output format:
+  #   Your keystore contains N entries
+  #
+  #   alias1, date, PrivateKeyEntry,
+  #   Certificate fingerprint (SHA-256): XX:XX:...
+  local available_aliases
+  available_aliases=$(echo "$keystore_test" | awk -F',' '/, PrivateKey/ {print $1}' | sed 's/^ *//')
+
+  if [ -z "$available_aliases" ]; then
+    # Boshqa format'da urinish (eski keytool versiyalar)
+    available_aliases=$(echo "$keystore_test" | grep -E "^[a-zA-Z0-9_-]+," | cut -d',' -f1)
+  fi
+
+  if [ -n "$available_aliases" ]; then
+    echo
+    info "${BOLD}Keystore ichidagi alias'lar:${NC}"
+    echo "$available_aliases" | while IFS= read -r a; do
+      [ -n "$a" ] && info "  • ${BOLD}$a${NC}"
+    done
+    echo
+  else
+    warn "Keystore o'qildi, lekin alias'larni avtomatik ekstrakt qila olmadik"
+    info "keytool javobi:"
+    echo "$keystore_test" | head -10 | sed 's/^/    /'
+    echo
+  fi
+
   read -p "    Key alias: " al
-  read -s -p "    Keystore parol: " sp; echo
+
+  # Alias mavjudligini tekshirish
+  if [ -n "$available_aliases" ]; then
+    if ! echo "$available_aliases" | grep -qFx "$al"; then
+      err "Bunday alias yo'q: '${BOLD}${al}${NC}'"
+      info "Yuqoridagi ro'yxatdan birini tanlang (case-sensitive)"
+      info "Mavjud alias'lar:"
+      echo "$available_aliases" | while IFS= read -r a; do
+        [ -n "$a" ] && info "  • $a"
+      done
+      return 1
+    fi
+  fi
+
   read -s -p "    Key parol [keystore parol bilan bir xil]: " kp; echo
   kp="${kp:-$sp}"
 
-  # find_keytool: PATH, Android Studio, Homebrew va boshqa joylar
-  local lk_bin
-  lk_bin=$(find_keytool)
-  if [ -n "$lk_bin" ]; then
-    if ! "$lk_bin" -list -keystore "$kpath" -alias "$al" -storepass "$sp" > /dev/null 2>&1; then
-      err "Keystore o'qib bo'lmadi (parol yoki alias noto'g'ri)"
-      return 1
-    fi
-    ok "Keystore tekshirildi: alias '$al' topildi"
+  # Alias bilan to'liq tekshiruv (key parolini ham sinab ko'rish)
+  local alias_test alias_rc
+  alias_test=$("$lk_bin" -list -keystore "$kpath" -alias "$al" -storepass "$sp" 2>&1)
+  alias_rc=$?
+  if [ $alias_rc -ne 0 ]; then
+    err "Alias bilan tekshirib bo'lmadi"
+    echo "$alias_test" | head -3 | sed 's/^/    /'
+    return 1
   fi
+
+  ok "Keystore va alias to'liq tekshirildi: ${BOLD}${al}${NC}"
+  info "Keystore yo'li: ${kpath}"
 
   write_key_properties "$sp" "$kp" "$al" "$kpath"
   ensure_gitignore_for_keys

@@ -5,6 +5,130 @@ Loyihaning barcha muhim o'zgarishlari shu faylga yoziladi.
 Format [Keep a Changelog](https://keepachangelog.com/uz/1.1.0/) asosida,
 versiyalash esa [Semantic Versioning](https://semver.org/lang/uz/) qoidasiga rioya qiladi.
 
+## [1.13.6] — 2026-06-04
+
+### Tuzatildi — **Keystore ulash xato'lari batafsil diagnostika**
+
+User report: foydalanuvchi `/Users/.../android/app/key` yo'lni kiritdi
+(kengaytmasiz), parol va alias kiritdi, lekin **"Keystore o'qib bo'lmadi
+(parol yoki alias noto'g'ri)"** xato'si bilan to'xtab qoldi.
+
+Bu **opaque error** — qaysi nuqsoni ekanligi noma'lum:
+- Yo'l noto'g'rimi?
+- Parol noto'g'rimi?
+- Alias noto'g'rimi?
+- Fayl format JKS emasmi?
+
+### Yangi `_resolve_keystore_path` — smart path handling
+
+Foydalanuvchi kiritgan yo'lni **avtomatik to'g'rilash**:
+
+```
+Keystore yo'li: android/app/key   ← foydalanuvchi xato yozgan
+
+  → 1. Fayl mavjudmi: android/app/key (yo'q)
+  → 2. .jks qo'shib sinab ko'rish: android/app/key.jks (bor!)
+  ✓ Kengaytma avtomatik qo'shildi: .jks
+```
+
+Sinab ko'riladigan kengaytmalar: `.jks`, `.keystore`, `.pk12`, `.p12`
+
+### Papka berilsa — ichidan keystore qidirish
+
+```
+Keystore yo'li: android/app   ← papka kiritildi
+
+  'android/app' — papka. Ichida keystore qidirilmoqda...
+  ✓ Avtomatik topildi: android/app/key.jks
+```
+
+Bir nechta topilsa, foydalanuvchidan tanlash so'raladi:
+```
+  Bir nechta keystore topildi:
+    1) android/app/key.jks
+    2) android/app/old-key.jks
+    3) android/app/release/upload.keystore
+
+    Qaysi birini tanlaysiz (raqam): 1
+```
+
+### 3 bosqichli validation pyramid
+
+Avval **opaque** test:
+- ✗ "Keystore o'qib bo'lmadi (parol yoki alias noto'g'ri)"
+
+Endi **3 alohida bosqich**:
+
+```
+▶ Keystore o'qilmoqda (parol va format tekshiruvi)...
+✓ Keystore o'qildi — parol to'g'ri va format JKS/PKCS12
+
+Keystore ichidagi alias'lar:
+  • key
+  • upload
+  • debug
+
+    Key alias: keyy   ← xato yozildi
+✗ Bunday alias yo'q: 'keyy'
+ℹ Yuqoridagi ro'yxatdan birini tanlang (case-sensitive)
+```
+
+### Pattern-based xato diagnostika
+
+Keystore o'qib bo'lmasa, **aniq sabab** ko'rsatiladi:
+
+```
+keytool xatosi  →  Bizning ko'rsatadigan sabab + yechim
+─────────────────────────────────────────────────────────
+"password was incorrect"      →  Keystore paroli noto'g'ri
+"Invalid keystore format"     →  Fayl JKS/PKCS12 emas (file komandasi natijasi)
+"Keystore was tampered with"  →  Parol noto'g'ri yoki fayl buzilgan
+"FileNotFoundException"       →  Fayl mavjud emas
+boshqa                        →  Keytool javobining birinchi 5 qatori
+```
+
+### Foydalanuvchi tajribasi taqqoslash
+
+| Sizning vaziyat | v1.13.5 | v1.13.6 |
+|----------------|---------|---------|
+| Kengaytmasiz `key` yo'l | ✗ Fayl topilmadi | ✓ `.jks` avtomatik qo'shildi |
+| Papka yo'l `android/app` | ✗ Fayl topilmadi | ✓ Ichidan keystore topildi |
+| Noto'g'ri parol | ✗ "parol yoki alias..." (qaysi'si?) | ✓ "Keystore paroli noto'g'ri" |
+| Noto'g'ri alias | ✗ "parol yoki alias..." (qaysi'si?) | ✓ Mavjud alias'lar ro'yxati |
+| Noto'g'ri format (PDF, txt) | ✗ "parol yoki alias..." | ✓ "Fayl JKS/PKCS12 emas" + file info |
+
+### Tilde expansion qo'shimcha
+
+`~/Documents/key.jks` kabi yo'l'lar avtomatik `/Users/USER/Documents/key.jks` ga aylanadi.
+
+### keytool yo'q bo'lsa fallback
+
+Agar keytool topilmasa, **degraded mode** — keystore tekshirilmasdan ulanadi.
+Build vaqtida parol/alias to'g'riligi bilinadi. Bu eski xulq'ni saqlaydi
+(progressive enhancement).
+
+### Test natijalari
+
+5/5 unit test:
+- ✓ Kengaytmasiz yo'l → `.jks` qo'shiladi (sizning vaziyat)
+- ✓ Papka yo'l → ichidagi yagona keystore topiladi
+- ✓ To'liq yo'l → as-is qabul qilinadi
+- ✓ Hech narsa topilmasa → exit 1 (false positive yo'q)
+- ✓ Tilde expansion (`~/...` → `$HOME/...`)
+
+### Texnik tafsilot
+
+**Specificity ladder** keystore qidirish'da: exact path → extension probing →
+folder scan → manual selection. Bu **forgiving input** pattern — UI'larda
+keng tarqalgan.
+
+**3-stage validation**: keystore o'qish > alias mavjudligi > alias bilan tekshirish.
+Har biri **alohida xato xabari**. Bu **failure isolation** — qaysi qadamda
+muvaffaqiyatsizlik aniq.
+
+**Awk + sed alias extraction**: keytool'ning ikki xil output format'ini
+qo'llab-quvvatlash uchun (yangi va eski keytool versiyalari).
+
 ## [1.13.5] — 2026-06-04
 
 ### Qo'shildi — **Progressive backoff retry** (cache propagatsiya'sini kutadi)
@@ -1821,6 +1945,7 @@ yangi yo'lni oladi (3 loyiha → 1 ta fayl tahriri).
 - AAB va APK formatlari, Production va Debug rejimlari.
 - Build natijalarini Finder'da avtomatik ochish.
 
+[1.13.6]: https://github.com/Jaloliddin-Fozilov/flutter-build-tool/releases/tag/v1.13.6
 [1.13.5]: https://github.com/Jaloliddin-Fozilov/flutter-build-tool/releases/tag/v1.13.5
 [1.13.4]: https://github.com/Jaloliddin-Fozilov/flutter-build-tool/releases/tag/v1.13.4
 [1.13.3]: https://github.com/Jaloliddin-Fozilov/flutter-build-tool/releases/tag/v1.13.3
