@@ -22,7 +22,7 @@
 set -eo pipefail
 
 # ─── Skript ma'lumotlari ──────────────────────────────────
-SCRIPT_VERSION="1.13.4"
+SCRIPT_VERSION="1.13.5"
 SCRIPT_REPO="Jaloliddin-Fozilov/flutter-build-tool"
 SCRIPT_RAW_URL="https://raw.githubusercontent.com/${SCRIPT_REPO}/main/flutter_build.sh"
 
@@ -4690,38 +4690,71 @@ _play_403_admin_retry() {
   info "  8. ${BOLD}5-10 daqiqa kuting${NC} (Google'da cache yangilanishi)"
   echo
 
+  # v1.13.5: 3 ta MUHIM tekshiruv (foydalanuvchilar 'Apply' bilan to'xtab qolishadi)
+  echo
+  echo -e "  ${BOLD}⚠ MUHIM — qo'shimcha tekshiruv:${NC}"
+  echo -e "    ${CYAN}1.${NC} Checkbox haqiqatan belgilandimi (✓ ko'k)?"
+  echo -e "    ${CYAN}2.${NC} ${BOLD}Sahifa PASTI o'ng burchagidagi KO'K rangli${NC}"
+  echo -e "       ${BOLD}'Сохранить изменения' / 'Save changes' tugmasini BOSDINGIZMI?${NC}"
+  echo -e "    ${CYAN}3.${NC} Tepada yashil '${BOLD}Сохранено${NC}' / '${BOLD}Saved${NC}' xabar paydo bo'ldimi?"
+  echo
+  echo -e "  ${BOLD}Eslatma:${NC} 'Apply' kifoya emas — sahifa pastidagi 'Save' ham kerak."
+  echo -e "  Save'dan keyin ${BOLD}5-15 daqiqa${NC} cache propagatsiyasi vaqti."
+  echo
+
   local retry
-  read -p "  Permission qo'shdingizmi? Hozir RETRY commit qilamizmi? (y/n) [y]: " retry
+  read -p "  Hammasi bajarildi, RETRY qilamizmi? (y/n) [y]: " retry
   if [[ "$retry" =~ ^[Nn]$ ]]; then
     info "Bekor qilindi — keyinroq qaytadan urinib ko'ring"
     info "Edit ID hali 24 soat amal qiladi: ${BOLD}${edit_id}${NC}"
     return 1
   fi
 
-  echo
-  step "Commit retry'da..."
-  info "Yangi access token olinmoqda (eski'si muddati o'tgan bo'lishi mumkin)..."
-
-  local new_token retry_response
+  # v1.13.5: Progressive backoff retry — cache propagatsiyasini kutadi
+  # Strategiya: darrov urinib ko'rish (foydalanuvchi allaqachon kutgan bo'lishi mumkin),
+  # keyin +60s, +120s. Jami ~3 daqiqa.
+  local new_token retry_response delay attempt
   new_token=$(play_get_access_token "$jwt") || {
     err "Yangi token olib bo'lmadi"
     return 1
   }
   ok "Yangi token olindi"
 
-  retry_response=$(curl -fsS -X POST \
-    "${api_base}/edits/${edit_id}:commit" \
-    -H "Authorization: Bearer ${new_token}" 2>&1)
-
-  if [ $? -eq 0 ]; then
+  for attempt in 1 2 3; do
     echo
-    ok "🎉 Commit muvaffaqiyatli! (retry'da ishladi)"
-    info "Permission to'g'ri qo'shilgan ekan."
-    return 0
-  fi
+    case "$attempt" in
+      1) step "[Attempt 1/3] Commit retry'da (darrov, ehtimol siz allaqachon kutgansiz)..." ;;
+      2) step "[Attempt 2/3] Cache yangilanishi uchun 60 sekund kutib qaytadan..."
+         info "(Bu vaqtda choy ichib, biroz kutib turing)"
+         sleep 60
+         # Yangi token ham olamiz (eski'si muddati o'tgan bo'lishi mumkin)
+         new_token=$(play_get_access_token "$jwt") || return 1
+         ;;
+      3) step "[Attempt 3/3] Yana 120 sekund kutib so'nggi urinish..."
+         info "(Bu Google'ning eventual consistency'siga bo'ysunadi)"
+         sleep 120
+         new_token=$(play_get_access_token "$jwt") || return 1
+         ;;
+    esac
 
-  echo
-  err "Retry ham xato berdi: $retry_response"
+    retry_response=$(curl -fsS -X POST \
+      "${api_base}/edits/${edit_id}:commit" \
+      -H "Authorization: Bearer ${new_token}" 2>&1)
+
+    if [ $? -eq 0 ]; then
+      echo
+      ok "🎉 Commit muvaffaqiyatli! (Attempt $attempt/3'da ishladi)"
+      info "Permission to'g'ri qo'shilgan va cache yangilangan."
+      return 0
+    fi
+
+    # Xato — keyingi attempt'ga o'tamiz (yoki tugadi)
+    if [ "$attempt" = "3" ]; then
+      err "Barcha 3 ta urinish xato berdi: $retry_response"
+    else
+      warn "Attempt $attempt xato berdi — keyingi attempt'ga o'tamiz"
+    fi
+  done
 
   # v1.13.4: Avtomatik diagnostika
   _play_403_run_api_diagnostic "$api_base" "$new_token" "$package_name" "$sa_email" "$track"

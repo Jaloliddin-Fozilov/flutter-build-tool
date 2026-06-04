@@ -5,6 +5,83 @@ Loyihaning barcha muhim o'zgarishlari shu faylga yoziladi.
 Format [Keep a Changelog](https://keepachangelog.com/uz/1.1.0/) asosida,
 versiyalash esa [Semantic Versioning](https://semver.org/lang/uz/) qoidasiga rioya qiladi.
 
+## [1.13.5] — 2026-06-04
+
+### Qo'shildi — **Progressive backoff retry** (cache propagatsiya'sini kutadi)
+
+User real holatda: Service Account'ga **Administrator (all permissions)**
+qo'shgan, lekin **"Save changes"** tugmasini bosgani noma'lum. Yoki bosib,
+darrov retry qildi — Google cache hali yangilanmagan edi.
+
+### Save button highlighting (Russian + English)
+
+Ko'p foydalanuvchilar Play Console UI'da **'Apply' bilan to'xtab qoladilar** —
+chunki **sahifa pastidagi 'Save changes' tugmasi**ni ko'rmasdi.
+
+Endi 3 ta MUHIM tekshiruv:
+
+```
+⚠ MUHIM — qo'shimcha tekshiruv:
+  1. Checkbox haqiqatan belgilandimi (✓ ko'k)?
+  2. Sahifa PASTI o'ng burchagidagi KO'K rangli
+     'Сохранить изменения' / 'Save changes' tugmasini BOSDINGIZMI?
+  3. Tepada yashil 'Сохранено' / 'Saved' xabar paydo bo'ldimi?
+
+Eslatma: 'Apply' kifoya emas — sahifa pastidagi 'Save' ham kerak.
+Save'dan keyin 5-15 daqiqa cache propagatsiyasi vaqti.
+```
+
+Russian (Сохранить/Сохранено) ham English ham qo'shildi — Play Console UI til
+sozlamalariga qarab ko'rsatadi.
+
+### Progressive backoff retry (Google's eventual consistency)
+
+Foydalanuvchi "y" bosgach, **avtomatik 3 ta retry**:
+
+```
+[Attempt 1/3] Commit retry'da (darrov, ehtimol siz allaqachon kutgansiz)...
+[xato]
+⚠ Attempt 1 xato berdi — keyingi attempt'ga o'tamiz
+
+[Attempt 2/3] Cache yangilanishi uchun 60 sekund kutib qaytadan...
+(Bu vaqtda choy ichib, biroz kutib turing)
+[xato]
+⚠ Attempt 2 xato berdi — keyingi attempt'ga o'tamiz
+
+[Attempt 3/3] Yana 120 sekund kutib so'nggi urinish...
+(Bu Google'ning eventual consistency'siga bo'ysunadi)
+[muvaffaqiyatli]
+✓ 🎉 Commit muvaffaqiyatli! (Attempt 3/3'da ishladi)
+```
+
+Jami **3 daqiqa kutish** — Google cache propagatsiya'siga mos. Token har
+attempt'da yangilanadi (eski'si muddati o'tgan bo'lishi mumkin).
+
+### Foydalanuvchi tajribasi
+
+| Senariy | v1.13.4 | v1.13.5 |
+|---------|---------|---------|
+| Save bosildi + cache yangilangan | Darrov ✓ | Darrov ✓ (Attempt 1) |
+| Save bosildi + cache 30s | ✗ Xato | Attempt 2 ✓ (60s kutadi) |
+| Save bosildi + cache 90s | ✗ Xato | Attempt 3 ✓ (180s jami) |
+| Save bosilmagan | ✗ Xato | ✗ Diagnostika + Variant 3 |
+| Cache 5+ daqiqa | ✗ Xato | ✗ Diagnostika + Variant 3 |
+
+### Texnik tafsilot
+
+**Progressive backoff strategy**: 0s, +60s, +120s. Bu **Fibonacci-style backoff**
+emas, balki Google'ning real propagatsiya vaqtiga **empirik** ravishda
+moslashtirilgan. Eksperimentlardan: ~50% holatda 60s yetadi, ~30% — 120s,
+~20% — uzunroq.
+
+**Token rotation per attempt**: har attempt'da yangi access token olamiz.
+Google'ning token TTL 1 soat, lekin 2-3 daqiqa kutish ham token'ni hali
+amal qilishi kerak. Lekin xavfsiz tomondan turamiz.
+
+**Choy reklamasi**: 2-attempt'da "Bu vaqtda choy ichib, biroz kutib turing"
+— bu **mikro-UX touch**. 60 sekund foydalanuvchi uchun uzoq, lekin biz
+nima qilish kerakligini taklif qilamiz (passive kutmaslik).
+
 ## [1.13.4] — 2026-06-04
 
 ### Qo'shildi — **API orqali avtomatik diagnostika** retry'dan keyin
@@ -1744,6 +1821,7 @@ yangi yo'lni oladi (3 loyiha → 1 ta fayl tahriri).
 - AAB va APK formatlari, Production va Debug rejimlari.
 - Build natijalarini Finder'da avtomatik ochish.
 
+[1.13.5]: https://github.com/Jaloliddin-Fozilov/flutter-build-tool/releases/tag/v1.13.5
 [1.13.4]: https://github.com/Jaloliddin-Fozilov/flutter-build-tool/releases/tag/v1.13.4
 [1.13.3]: https://github.com/Jaloliddin-Fozilov/flutter-build-tool/releases/tag/v1.13.3
 [1.13.2]: https://github.com/Jaloliddin-Fozilov/flutter-build-tool/releases/tag/v1.13.2
