@@ -5,6 +5,81 @@ Loyihaning barcha muhim o'zgarishlari shu faylga yoziladi.
 Format [Keep a Changelog](https://keepachangelog.com/uz/1.1.0/) asosida,
 versiyalash esa [Semantic Versioning](https://semver.org/lang/uz/) qoidasiga rioya qiladi.
 
+## [1.14.0] — 2026-06-04
+
+### Qo'shildi — **Bundle upload 403** uchun maxsus diagnostika (YANGI app)
+
+User report: boshqa loyiha (`uz.gennis.todo`, shaxsiy account
+`premium-aloe-322109`) — xato **[3/5] AAB upload** bosqichida 403, commit
+emas. "o'zimi akkauntim bo'lsa ham yuklanmadi".
+
+### Sabab — Google Play API'ning "first release" cheklovi
+
+Google Play Developer API **yangi app'ning BIRINCHI versiyasini yuklay
+olmaydi**. Birinchi AAB **majburiy ravishda Play Console UI orqali** qo'lda
+yuklanishi kerak. Bundan keyin API ishlaydi.
+
+`uz.gennis.todo` v1.0.0 — bu aniq **birinchi release**. Shuning uchun
+bundle upload 403 berdi (edit yaratish 200 bo'lsa ham).
+
+### Yangi `play_handle_bundle_403` funksiyasi
+
+Bundle upload 403 bo'lsa, 4 ta eng tez-tez sabab ko'rsatiladi:
+
+```
+⚠ AAB upload 403 — eng tez-tez uchraydigan sabab:
+
+1. YANGI app — birinchi release qo'lda kerak (ENG EHTIMOL)
+   Google Play API yangi app'ning BIRINCHI versiyasini yuklay olmaydi.
+   Birinchi AAB Play Console UI orqali qo'lda yuklanishi SHART.
+   Bundan keyin API avtomatik ishlaydi.
+
+2. App Play Console'da hali yaratilmagan
+   Package uz.gennis.todo Play Console'da mavjudmi?
+
+3. SA'da 'release' yoki 'edit' ruxsati yo'q
+   (lekin edit yaratish ishladi — demak bu kam ehtimol)
+
+4. Developer account sozlash tugallanmagan
+   (to'lov profili, shartnomalar imzolanmagan)
+
+╭─ Hozir nima qilamiz? ──────────────────────────────────╮
+│  1) ⭐ Play Console UI orqali QO'LDA upload (birinchi release uchun!)
+│  2) 🌐 App Play Console'da bormi — tekshiraman
+│  3) ❌ Bekor
+╰─────────────────────────────────────────────────────────╯
+```
+
+### Variant 2 — App existence check
+
+Account selector ochiladi va foydalanuvchiga yo'l-yo'riq:
+- To'g'ri account'da app bormi?
+- Agar yo'q — 'Create app' bilan yaratish
+- Agar bor — birinchi AAB ni qo'lda yuklash
+- Birinchi release'dan keyin API avtomatik ishlaydi
+
+### Stage-specific 403 diagnostika
+
+v1.14.0 da har bir bosqichdagi 403 **alohida** tahlil qilinadi:
+
+| Bosqich | 403 ma'nosi | Handler |
+|---------|-------------|---------|
+| Edit yaratish | App access yo'q | edit error handler |
+| **Bundle upload** | **Yangi app, birinchi release qo'lda** | `play_handle_bundle_403` |
+| Commit | Release permission yo'q | `play_handle_commit_403` |
+
+### Texnik tafsilot
+
+**API first-release restriction**: Google Play Developer API yangi app
+yaratishni va birinchi release'ni avtomatlashtirishni taqiqlaydi (spam/abuse
+oldini olish). Bu **intentional limitation** — har bir yangi app inson
+tasdiqlashi kerak. Bizning skript buni aniq tushuntiradi va manual yo'lni
+taklif qiladi.
+
+**Stage-aware error handling**: bir xil HTTP 403 turli bosqichlarda turli
+ma'no beradi. Universal handler yetarli emas — har bosqich o'z kontekstida
+talqin qilinadi.
+
 ## [1.13.9] — 2026-06-04
 
 ### Tuzatildi — **Soxta 404 diagnostika** foydalanuvchini xato yo'naltirardi
@@ -2238,6 +2313,7 @@ yangi yo'lni oladi (3 loyiha → 1 ta fayl tahriri).
 - AAB va APK formatlari, Production va Debug rejimlari.
 - Build natijalarini Finder'da avtomatik ochish.
 
+[1.14.0]: https://github.com/Jaloliddin-Fozilov/flutter-build-tool/releases/tag/v1.14.0
 [1.13.9]: https://github.com/Jaloliddin-Fozilov/flutter-build-tool/releases/tag/v1.13.9
 [1.13.8]: https://github.com/Jaloliddin-Fozilov/flutter-build-tool/releases/tag/v1.13.8
 [1.13.7]: https://github.com/Jaloliddin-Fozilov/flutter-build-tool/releases/tag/v1.13.7

@@ -22,7 +22,7 @@
 set -eo pipefail
 
 # ─── Skript ma'lumotlari ──────────────────────────────────
-SCRIPT_VERSION="1.13.9"
+SCRIPT_VERSION="1.14.0"
 SCRIPT_REPO="Jaloliddin-Fozilov/flutter-build-tool"
 SCRIPT_RAW_URL="https://raw.githubusercontent.com/${SCRIPT_REPO}/main/flutter_build.sh"
 
@@ -4764,6 +4764,78 @@ extract_json_number() {
     | sed -E "s/.*:[[:space:]]*([0-9]+).*/\1/"
 }
 
+# v1.14.0: Bundle upload 403 handler — YANGI app uchun maxsus
+# Bundle upload bosqichida 403 ko'pincha "birinchi release qo'lda kerak" degani.
+# Google Play API yangi app'ning BIRINCHI versiyasini yuklay olmaydi.
+#
+# Args: package_name aab_path track
+# Returns:
+#   0 — manual upload boshlandi (xato emas)
+#   1 — bekor qilindi
+play_handle_bundle_403() {
+  local package_name="$1" aab_path="$2" track="$3"
+
+  echo
+  warn "${BOLD}AAB upload 403 — eng tez-tez uchraydigan sabab:${NC}"
+  echo
+  info "${BOLD}1. YANGI app — birinchi release qo'lda kerak (ENG EHTIMOL)${NC}"
+  info "   Google Play API ${BOLD}yangi app'ning BIRINCHI versiyasini${NC} yuklay olmaydi."
+  info "   Birinchi AAB Play Console UI orqali qo'lda yuklanishi SHART."
+  info "   Bundan keyin API avtomatik ishlaydi."
+  echo
+  info "${BOLD}2. App Play Console'da hali yaratilmagan${NC}"
+  info "   Package ${BOLD}${package_name}${NC} Play Console'da mavjudmi?"
+  echo
+  info "${BOLD}3. SA'da 'release' yoki 'edit' ruxsati yo'q${NC}"
+  info "   (lekin edit yaratish ishladi — demak bu kam ehtimol)"
+  echo
+  info "${BOLD}4. Developer account sozlash tugallanmagan${NC}"
+  info "   (to'lov profili, shartnomalar imzolanmagan)"
+  echo
+
+  echo -e "  ${BOLD}╭─ Hozir nima qilamiz? ──────────────────────────────────╮${NC}"
+  echo -e "  ${BOLD}│${NC}  ${CYAN}1${NC}) ⭐ ${BOLD}Play Console UI orqali QO'LDA upload${NC} (birinchi release uchun!) ${BOLD}│${NC}"
+  echo -e "  ${BOLD}│${NC}  ${CYAN}2${NC}) 🌐 App Play Console'da bormi — tekshiraman                  ${BOLD}│${NC}"
+  echo -e "  ${BOLD}│${NC}  ${CYAN}3${NC}) ❌ Bekor                                                      ${BOLD}│${NC}"
+  echo -e "  ${BOLD}╰─────────────────────────────────────────────────────────╯${NC}"
+  echo
+
+  local choice
+  read -p "  Tanlang [1-3] [1]: " choice
+  case "${choice:-1}" in
+    1)
+      _play_403_manual_ui_upload "$package_name" "$aab_path" "$track"
+      return 0
+      ;;
+    2)
+      echo
+      step "Play Console — app holatini tekshirish"
+      local url="https://play.google.com/console/u/0/developers"
+      info "Account selector ochilmoqda — to'g'ri account'ni tanlang"
+      open_url "$url"
+      echo
+      info "Tekshiring:"
+      info "  1. To'g'ri account'da ${BOLD}${package_name}${NC} app bormi?"
+      info "  2. Agar YO'Q — 'Create app' bosib yangi app yarating"
+      info "  3. Agar BOR — 'Release' → 'Internal testing' → 'Create new release'"
+      info "     birinchi AAB ni qo'lda yuklang"
+      info "  4. Birinchi release'dan keyin bizning skript API orqali ishlaydi"
+      echo
+      # Finder'da AAB papkasi
+      if [ "$(uname)" = "Darwin" ] && command -v open > /dev/null 2>&1; then
+        info "AAB papkasi Finder'da ochilmoqda (drag-drop uchun)..."
+        open "$(dirname "$aab_path")"
+      fi
+      PLAY_MANUAL_UPLOAD_INITIATED=true
+      return 0
+      ;;
+    *)
+      info "Bekor qilindi"
+      return 1
+      ;;
+  esac
+}
+
 # 4 ta API call orqali AAB ni Play Store'ga yuklash
 # v1.13.2: Commit 403 uchun interaktiv recovery menyusi.
 # SA permission qo'shish admin huquqi — agar foydalanuvchi developer bo'lsa,
@@ -5330,17 +5402,30 @@ upload_to_play_store() {
     -H "Content-Type: application/octet-stream" \
     --data-binary "@${aab}" 2>&1) || {
       err "AAB yuklash xato: $upload_response"
+      echo
       # versionCode conflict — eng tez-tez uchraydi
       if echo "$upload_response" | grep -qE 'APK specifies a version code that has already been used|Version code [0-9]+ has already been used'; then
         info "Sabab: bu versionCode allaqachon Play Store'ga yuklangan"
         try_this \
           "flutter-build   # menu'da build #ga '+' bosing (avtomatik +1)" \
           "# yoki pubspec.yaml'da version: X.Y.Z+N ni N+1 ga oshiring"
+        return 1
       elif echo "$upload_response" | grep -q 'APK is not signed'; then
         info "Sabab: AAB signed emas yoki noto'g'ri signing"
         try_this "flutter-build   # Production checkbox'ini yoqing va keystore sozlang"
+        return 1
+      elif echo "$upload_response" | grep -qE "returned error: 403|HTTP/[12][^ ]* 403|\"code\": *403|forbidden|Forbidden"; then
+        # v1.14.0: bundle upload 403 — eng tez-tez YANGI app uchun
+        # Manual upload boshlansa, PLAY_MANUAL_UPLOAD_INITIATED flag o'rnatiladi.
+        # Har holda return 1 (API upload tugamadi) — caller else-branch'i flag'ni
+        # tekshirib to'g'ri xabar ('manual boshlandi' yoki 'xato') ko'rsatadi.
+        play_handle_bundle_403 "$package_name" "$aab" "$track" || true
+        return 1
+      else
+        info "Sabab: aniq emas — javob:"
+        echo "$upload_response" | head -5 | sed 's/^/    /'
+        return 1
       fi
-      return 1
     }
   version_code=$(extract_json_number "$upload_response" "versionCode")
   if [ -z "$version_code" ]; then
