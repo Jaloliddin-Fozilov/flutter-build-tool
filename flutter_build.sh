@@ -22,7 +22,7 @@
 set -eo pipefail
 
 # ─── Skript ma'lumotlari ──────────────────────────────────
-SCRIPT_VERSION="1.14.0"
+SCRIPT_VERSION="1.14.1"
 SCRIPT_REPO="Jaloliddin-Fozilov/flutter-build-tool"
 SCRIPT_RAW_URL="https://raw.githubusercontent.com/${SCRIPT_REPO}/main/flutter_build.sh"
 
@@ -6269,6 +6269,161 @@ run_build_wizard() {
   return 0
 }
 
+# v1.14.1: ProGuard qoidalarini qo'shish (R8 Play Core missing classes fix)
+# android/app/proguard-rules.pro ga keep/dontwarn qoidalarni qo'shadi va
+# build.gradle/build.gradle.kts da reference borligini ta'minlaydi.
+_ensure_proguard_playcore_rules() {
+  local pro_file="android/app/proguard-rules.pro"
+  local marker="# flutter-build-tool: Play Core deferred components fix"
+
+  # Allaqachon qo'shilgan bo'lsa, skip
+  if [ -f "$pro_file" ] && grep -qF "$marker" "$pro_file" 2>/dev/null; then
+    info "ProGuard qoidalari allaqachon mavjud: $pro_file"
+    return 0
+  fi
+
+  # Qoidalarni qo'shamiz (append yoki yangi fayl)
+  {
+    echo ""
+    echo "$marker"
+    echo "# Flutter embedding Play Core (deferred components) klasslarini reference qiladi,"
+    echo "# lekin app ularni o'z ichiga olmaydi. R8 minify vaqtida xato bermasligi uchun:"
+    echo "-dontwarn com.google.android.play.core.**"
+    echo "-keep class com.google.android.play.core.** { *; }"
+    echo "-keep class com.google.android.play.core.tasks.** { *; }"
+  } >> "$pro_file"
+  ok "ProGuard qoidalari qo'shildi: $pro_file"
+
+  # build.gradle yoki build.gradle.kts da proguard-rules.pro reference borligini tekshirish
+  local gradle_groovy="android/app/build.gradle"
+  local gradle_kts="android/app/build.gradle.kts"
+  local gradle_file=""
+  [ -f "$gradle_groovy" ] && gradle_file="$gradle_groovy"
+  [ -f "$gradle_kts" ] && gradle_file="$gradle_kts"
+
+  if [ -z "$gradle_file" ]; then
+    warn "android/app/build.gradle topilmadi — proguard reference qo'lda tekshiring"
+    return 0
+  fi
+
+  if grep -q "proguard-rules.pro" "$gradle_file" 2>/dev/null; then
+    info "build.gradle allaqachon proguard-rules.pro'ni reference qiladi"
+  else
+    info "build.gradle'da proguard-rules.pro reference yo'q"
+    info "Agar build qayta xato bersa, ${BOLD}${gradle_file}${NC} release buildType'ga qo'shing:"
+    if [ "$gradle_file" = "$gradle_kts" ]; then
+      info '  proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")'
+    else
+      info "  proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'"
+    fi
+  fi
+  return 0
+}
+
+# v1.14.1: Android build muvaffaqiyatsizligini tahlil qilish va imkon bo'lsa tuzatish
+# Args: build_type(appbundle/apk) exit_code log_file build_variant
+# Returns:
+#   0 — tuzatildi va qayta build muvaffaqiyatli (davom etish mumkin)
+#   1 — tuzatib bo'lmadi yoki foydalanuvchi rad etdi
+handle_android_build_failure() {
+  local btype="$1" rc="$2" log_file="$3" variant="$4"
+
+  echo
+  err "Android build muvaffaqiyatsiz (exit code: $rc)"
+  echo
+
+  local log_content=""
+  [ -f "$log_file" ] && log_content=$(cat "$log_file" 2>/dev/null)
+
+  # ─── R8 Play Core missing classes (eng tez-tez) ───
+  # Belgilar: "Missing class com.google.android.play.core" yoki missing_rules.txt mavjud
+  if echo "$log_content" | grep -qE "Missing class com\.google\.android\.play\.core|R8: Missing class|missing_rules\.txt" \
+     || [ -f "build/app/outputs/mapping/release/missing_rules.txt" ]; then
+    warn "${BOLD}Sabab aniqlandi: R8 + Play Core deferred components${NC}"
+    info "Flutter embedding 'com.google.android.play.core.*' klasslarini reference qiladi,"
+    info "lekin app ularni o'z ichiga olmaydi. R8 (code shrinker) ularni topa olmay xato beradi."
+    info "Bu ${BOLD}mashhur Flutter muammosi${NC} — ProGuard qoidalari bilan oson tuzatiladi."
+    echo
+
+    local fix_it
+    read -p "  Avtomatik tuzatib, qayta build qilamizmi? (y/n) [y]: " fix_it
+    if [[ "$fix_it" =~ ^[Nn]$ ]]; then
+      info "Qo'lda tuzatish uchun ${BOLD}android/app/proguard-rules.pro${NC} ga qo'shing:"
+      info "  -dontwarn com.google.android.play.core.**"
+      info "  -keep class com.google.android.play.core.** { *; }"
+      return 1
+    fi
+
+    _ensure_proguard_playcore_rules
+    echo
+    step "Qayta build qilinmoqda (ProGuard qoidalari bilan)..."
+    info "flutter build ${btype} ${variant}"
+    flutter build "${btype}" ${variant}
+    local retry_rc=$?
+    if [ "$retry_rc" -eq 0 ]; then
+      echo
+      ok "🎉 Build muvaffaqiyatli! (ProGuard qoidalari yordam berdi)"
+      return 0
+    fi
+    echo
+    err "Qayta build ham xato berdi (exit: $retry_rc)"
+    info "Sabab boshqa bo'lishi mumkin — yuqoridagi xato'ni ko'ring"
+    info "build.gradle'da ${BOLD}minifyEnabled${NC} va ${BOLD}proguardFiles${NC} to'g'ri sozlanganini tekshiring"
+    return 1
+  fi
+
+  # ─── Out of Memory (Gradle/Java heap) ───
+  if echo "$log_content" | grep -qiE "OutOfMemoryError|Java heap space|GC overhead limit|Expiring Daemon"; then
+    warn "${BOLD}Sabab: Xotira yetishmadi (Gradle/Java heap)${NC}"
+    info "Yechim — ${BOLD}android/gradle.properties${NC} ga qo'shing yoki oshiring:"
+    info "  org.gradle.jvmargs=-Xmx4096m -XX:MaxMetaspaceSize=2048m"
+    echo
+    local add_mem
+    read -p "  Avtomatik qo'shib, qayta build qilamizmi? (y/n) [y]: " add_mem
+    if [[ ! "$add_mem" =~ ^[Nn]$ ]]; then
+      local gp="android/gradle.properties"
+      if [ -f "$gp" ] && grep -q "org.gradle.jvmargs" "$gp"; then
+        # Mavjud qatorni almashtirish
+        sed -i.bak 's/^org.gradle.jvmargs=.*/org.gradle.jvmargs=-Xmx4096m -XX:MaxMetaspaceSize=2048m/' "$gp"
+      else
+        echo "org.gradle.jvmargs=-Xmx4096m -XX:MaxMetaspaceSize=2048m" >> "$gp"
+      fi
+      ok "gradle.properties yangilandi"
+      step "Qayta build qilinmoqda..."
+      flutter build "${btype}" ${variant}
+      [ $? -eq 0 ] && { ok "🎉 Build muvaffaqiyatli!"; return 0; }
+    fi
+    return 1
+  fi
+
+  # ─── Signing xatosi ───
+  if echo "$log_content" | grep -qiE "keystore|SigningConfig|Failed to read key|Keystore file .* not found"; then
+    warn "${BOLD}Sabab: Signing (keystore) muammosi${NC}"
+    info "android/key.properties va keystore fayl to'g'ri sozlanganini tekshiring"
+    try_this "flutter-build   # Build → Production → Android → keystore qayta sozlang"
+    return 1
+  fi
+
+  # ─── CocoaPods / umumiy ───
+  if echo "$log_content" | grep -qiE "Could not resolve|Could not find .* in|Failed to resolve"; then
+    warn "${BOLD}Sabab: Dependency resolve qilib bo'lmadi${NC}"
+    info "Yechim'lar:"
+    try_this \
+      "flutter clean && flutter pub get   # cache tozalash" \
+      "cd android && ./gradlew clean && cd ..   # Gradle cache"
+    return 1
+  fi
+
+  # ─── Umumiy (aniq emas) ───
+  warn "${BOLD}Sabab aniq emas${NC} — yuqoridagi to'liq xato'ni ko'ring"
+  info "Tez-tez yordam beradigan qadamlar:"
+  try_this \
+    "flutter clean && flutter pub get" \
+    "flutter doctor -v   # muhitni tekshirish" \
+    "cd android && ./gradlew assembleRelease --stacktrace && cd ..   # batafsil xato"
+  return 1
+}
+
 # ─── Asosiy build oqimi (v1.10.0: funksiyaga o'ralgan) ─────
 # Return codes:
 #   0 — build muvaffaqiyatli
@@ -6511,49 +6666,78 @@ BUILD_PATHS=()
 
 if $BUILD_ANDROID; then
   step "Android build (${MODE_LABEL})"
-  if $IS_PROD; then
-    if $BUILD_AAB; then
-      info "flutter build appbundle --release"
-      flutter build appbundle --release
-      BUILD_PATHS+=("$(pwd)/build/app/outputs/bundle/release")
+
+  # v1.14.1 KRITIK FIX: avval exit code TEKSHIRILMAYDI edi — build muvaffaqiyatsiz
+  # bo'lsa ham "muvaffaqiyatli" deyilardi (false positive). Endi tee + PIPESTATUS
+  # bilan output'ni ushlaymiz va exit code'ni tekshiramiz. Xato bo'lsa, output'dan
+  # sabab aniqlanadi (R8 Play Core, OOM, signing, va h.k.).
+  android_build_rc=0
+  build_variant=$($IS_PROD && echo "--release" || echo "--debug")
+  build_subdir=$($IS_PROD && echo "release" || echo "debug")
+  android_build_log=$(mktemp 2>/dev/null || echo "/tmp/fb_android_build.$$")
+
+  if $BUILD_AAB; then
+    info "flutter build appbundle ${build_variant}"
+    flutter build appbundle ${build_variant} 2>&1 | tee "$android_build_log"
+    android_build_rc=${PIPESTATUS[0]}
+    if [ "$android_build_rc" -ne 0 ]; then
+      handle_android_build_failure "appbundle" "$android_build_rc" "$android_build_log" "$build_variant"
+      android_retry_rc=$?
+      rm -f "$android_build_log"
+      [ "$android_retry_rc" -eq 0 ] || { return 1 2>/dev/null || exit 1; }
     fi
-    if $BUILD_APK; then
-      info "flutter build apk --release"
-      flutter build apk --release
-      BUILD_PATHS+=("$(pwd)/build/app/outputs/flutter-apk")
-    fi
-  else
-    if $BUILD_AAB; then
-      info "flutter build appbundle --debug"
-      flutter build appbundle --debug
-      BUILD_PATHS+=("$(pwd)/build/app/outputs/bundle/debug")
-    fi
-    if $BUILD_APK; then
-      info "flutter build apk --debug"
-      flutter build apk --debug
-      BUILD_PATHS+=("$(pwd)/build/app/outputs/flutter-apk")
-    fi
+    BUILD_PATHS+=("$(pwd)/build/app/outputs/bundle/${build_subdir}")
   fi
-  ok "Android build muvaffaqiyatli"
+
+  if $BUILD_APK; then
+    info "flutter build apk ${build_variant}"
+    flutter build apk ${build_variant} 2>&1 | tee "$android_build_log"
+    android_build_rc=${PIPESTATUS[0]}
+    if [ "$android_build_rc" -ne 0 ]; then
+      handle_android_build_failure "apk" "$android_build_rc" "$android_build_log" "$build_variant"
+      android_retry_rc=$?
+      rm -f "$android_build_log"
+      [ "$android_retry_rc" -eq 0 ] || { return 1 2>/dev/null || exit 1; }
+    fi
+    BUILD_PATHS+=("$(pwd)/build/app/outputs/flutter-apk")
+  fi
+
+  rm -f "$android_build_log"
+  ok "Android build muvaffaqiyatli (exit code 0)"
 fi
 
 if $BUILD_IOS; then
   step "iOS build (${MODE_LABEL})"
+  # v1.14.1 KRITIK FIX: iOS build ham exit code tekshirmasdan "muvaffaqiyatli"
+  # derdi (false positive). Endi tekshiramiz.
+  ios_build_rc=0
   if $IS_PROD; then
     if $DO_APPSTORE_UPLOAD; then
       info "flutter build ipa --release --export-options-plist ios/ExportOptions.plist"
       flutter build ipa --release --export-options-plist ios/ExportOptions.plist
+      ios_build_rc=$?
     else
       info "flutter build ipa --release"
       flutter build ipa --release
+      ios_build_rc=$?
     fi
     BUILD_PATHS+=("$(pwd)/build/ios/ipa")
   else
     info "flutter build ios --debug --no-codesign"
     flutter build ios --debug --no-codesign
+    ios_build_rc=$?
     BUILD_PATHS+=("$(pwd)/build/ios/iphoneos")
   fi
-  ok "iOS build muvaffaqiyatli"
+  if [ $ios_build_rc -ne 0 ]; then
+    err "iOS build muvaffaqiyatsiz (exit code: $ios_build_rc)"
+    info "Yuqoridagi xato xabarini ko'ring"
+    info "Tez-tez uchraydigan sabablar:"
+    info "  • CocoaPods muammosi: ${BOLD}cd ios && pod install && cd ..${NC}"
+    info "  • Signing: Xcode'da Team/Provisioning profil sozlang"
+    info "  • Clean kerak: ${BOLD}flutter clean && flutter pub get${NC}"
+    return 1 2>/dev/null || exit 1
+  fi
+  ok "iOS build muvaffaqiyatli (exit code 0)"
 fi
 
 # ─── 9b. App Store Connect ga upload ──────────────────────

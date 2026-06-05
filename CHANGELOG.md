@@ -5,6 +5,126 @@ Loyihaning barcha muhim o'zgarishlari shu faylga yoziladi.
 Format [Keep a Changelog](https://keepachangelog.com/uz/1.1.0/) asosida,
 versiyalash esa [Semantic Versioning](https://semver.org/lang/uz/) qoidasiga rioya qiladi.
 
+## [1.14.1] — 2026-06-05
+
+### 🔴 KRITIK TUZATISH — Build false positive (muvaffaqiyatsiz → "muvaffaqiyatli")
+
+User report: build `exit code 1` bilan **muvaffaqiyatsiz tugadi** (R8 xatosi),
+lekin skript **"✓ Android build muvaffaqiyatli"** dedi!
+
+```
+BUILD FAILED in 2m 17s
+Gradle task bundleRelease failed with exit code 1
+  ✓ Android build muvaffaqiyatli      ← XATO! (false positive)
+```
+
+### Sabab
+
+Build kodi `flutter build appbundle --release` ni ishga tushirardi, lekin
+**exit code'ni TEKSHIRMAS edi**:
+
+```bash
+flutter build appbundle --release    # exit code e'tiborsiz qoldirilardi
+...
+ok "Android build muvaffaqiyatli"    # SHARTSIZ "muvaffaqiyatli" deyilardi
+```
+
+Bu v1.12.2'dagi altool false positive bug'iga o'xshash — **eng xavfli bug
+turi**, chunki keyin skript mavjud bo'lmagan/eski AAB'ni upload qilmoqchi
+bo'lardi.
+
+### Fix — exit code tekshirish (Android + iOS)
+
+`tee` + `${PIPESTATUS[0]}` bilan output'ni ko'rsatib, exit code'ni ushlash:
+
+```bash
+flutter build appbundle ${variant} 2>&1 | tee "$log"
+android_build_rc=${PIPESTATUS[0]}
+if [ "$android_build_rc" -ne 0 ]; then
+  handle_android_build_failure ...    # tahlil + auto-fix
+  return 1
+fi
+ok "Android build muvaffaqiyatli (exit code 0)"   # FAQAT 0 bo'lsa
+```
+
+iOS build ham xuddi shu false positive bug'dan tozalandi.
+
+### Qo'shildi — R8 Play Core missing classes AVTOMATIK tuzatish
+
+User'ning haqiqiy build xatosi:
+```
+ERROR: R8: Missing class com.google.android.play.core.tasks.OnFailureListener
+Missing class com.google.android.play.core.tasks.Task
+Execution failed for task ':app:minifyReleaseWithR8'.
+```
+
+Bu **mashhur Flutter muammosi** — Flutter embedding `com.google.android.play.core.*`
+klasslarni reference qiladi (deferred components uchun), lekin app ularni
+o'z ichiga olmaydi. R8 (code shrinker) topa olmay xato beradi.
+
+### Yangi `handle_android_build_failure` — pattern-based diagnostika + auto-fix
+
+Build xato bersa, output'dan **sabab aniqlanadi**:
+
+| Pattern | Sabab | Auto-fix |
+|---------|-------|----------|
+| `Missing class ...play.core` | R8 + Play Core | ProGuard qoidalari + retry |
+| `OutOfMemoryError` | Gradle heap | gradle.properties + retry |
+| `keystore/SigningConfig` | Signing | keystore qayta sozlash |
+| `Could not resolve` | Dependency | flutter clean + pub get |
+| boshqa | Aniq emas | stacktrace yo'l-yo'riq |
+
+### R8 auto-fix workflow
+
+```
+✗ Android build muvaffaqiyatsiz (exit code: 1)
+
+Sabab aniqlandi: R8 + Play Core deferred components
+Flutter embedding 'com.google.android.play.core.*' klasslarini reference qiladi,
+lekin app ularni o'z ichiga olmaydi. Bu mashhur Flutter muammosi.
+
+  Avtomatik tuzatib, qayta build qilamizmi? (y/n) [y]: y
+
+✓ ProGuard qoidalari qo'shildi: android/app/proguard-rules.pro
+
+▶ Qayta build qilinmoqda (ProGuard qoidalari bilan)...
+✓ 🎉 Build muvaffaqiyatli! (ProGuard qoidalari yordam berdi)
+```
+
+### `_ensure_proguard_playcore_rules` — idempotent ProGuard fix
+
+`android/app/proguard-rules.pro` ga qo'shadi:
+```
+# flutter-build-tool: Play Core deferred components fix
+-dontwarn com.google.android.play.core.**
+-keep class com.google.android.play.core.** { *; }
+-keep class com.google.android.play.core.tasks.** { *; }
+```
+
+Plus `build.gradle`/`build.gradle.kts` da `proguard-rules.pro` reference
+borligini tekshiradi (Groovy va KTS ikkalasi ham).
+
+Idempotent — marker bilan tekshiriladi, qayta chaqirilsa dublikat qo'shmaydi.
+
+### Test natijalari
+
+3/3 unit test:
+- ✓ R8 Play Core pattern detection
+- ✓ ProGuard qoidalari to'g'ri qo'shiladi
+- ✓ Idempotent (dublikat yo'q)
+
+### Texnik tafsilot
+
+**Build correctness — eng muhim invariant**: build tool'ning ENG asosiy
+va'dasi — "muvaffaqiyatli" faqat haqiqatan muvaffaqiyatli bo'lganda deyish.
+Exit code tekshirmaslik bu va'dani buzadi. Bu **silent failure** —
+foydalanuvchi build buzilganini bilmay, eski AAB'ni upload qiladi.
+
+**R8 self-documenting fix**: R8 `missing_rules.txt` faylida aniq qaysi
+qoidalar kerakligini yozadi. Bizning fix universal `-dontwarn`/`-keep`
+qoidalarini qo'shadi (deferred components ishlatmaydigan app'lar uchun
+xavfsiz).
+
 ## [1.14.0] — 2026-06-04
 
 ### Qo'shildi — **Bundle upload 403** uchun maxsus diagnostika (YANGI app)
@@ -2313,6 +2433,7 @@ yangi yo'lni oladi (3 loyiha → 1 ta fayl tahriri).
 - AAB va APK formatlari, Production va Debug rejimlari.
 - Build natijalarini Finder'da avtomatik ochish.
 
+[1.14.1]: https://github.com/Jaloliddin-Fozilov/flutter-build-tool/releases/tag/v1.14.1
 [1.14.0]: https://github.com/Jaloliddin-Fozilov/flutter-build-tool/releases/tag/v1.14.0
 [1.13.9]: https://github.com/Jaloliddin-Fozilov/flutter-build-tool/releases/tag/v1.13.9
 [1.13.8]: https://github.com/Jaloliddin-Fozilov/flutter-build-tool/releases/tag/v1.13.8
