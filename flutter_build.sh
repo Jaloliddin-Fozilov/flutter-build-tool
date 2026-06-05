@@ -22,7 +22,7 @@
 set -eo pipefail
 
 # ─── Skript ma'lumotlari ──────────────────────────────────
-SCRIPT_VERSION="1.14.1"
+SCRIPT_VERSION="1.14.2"
 SCRIPT_REPO="Jaloliddin-Fozilov/flutter-build-tool"
 SCRIPT_RAW_URL="https://raw.githubusercontent.com/${SCRIPT_REPO}/main/flutter_build.sh"
 
@@ -6554,27 +6554,48 @@ $DO_CLEAN && ok "flutter clean: ${GREEN}yoqilgan${NC}" || info "flutter clean: o
 $DO_PUBGET && ok "flutter pub get: ${GREEN}yoqilgan${NC}" || info "flutter pub get: o'tkazib yuboriladi"
 
 # ─── 4. Yangi versiyalar (qo'lda kiritish) ────────────────
+# v1.14.2 FIX: standart Flutter loyihasida Android/iOS versiyasi pubspec.yaml
+# dan olinadi (Flutter reference). Avval alohida "Android versionCode" prompt
+# ko'rsatardik — foydalanuvchi uni oshirardi, lekin pubspec o'zgarmagani uchun
+# ta'sir qilmasdi ("versiya oshmayapti"). Endi: Flutter reference bo'lsa, faqat
+# pubspec so'raladi (yagona manba). Hardcoded bo'lsagina alohida so'raladi.
 step "Yangi versiyalarni kiriting"
 info "Enter — hozirgi qiymatni saqlaydi  |  + — oxirgi raqamni +1 ga oshirish"
+
+# Platformalar pubspec'ga bog'liqmi yoki hardcoded'mi — aniqlaymiz
+both_use_flutter_ref=true
+$BUILD_IOS && ! $IOS_USES_FLUTTER_REF && both_use_flutter_ref=false
+$BUILD_ANDROID && ! $ANDROID_USES_FLUTTER_REF && both_use_flutter_ref=false
+
+if $both_use_flutter_ref; then
+  echo
+  ok "Bu loyiha pubspec.yaml'ni yagona manba sifatida ishlatadi"
+  info "(Android versionCode va iOS build number pubspec.yaml'dan olinadi)"
+  info "${BOLD}Versiya oshirish uchun pubspec build # ni oshiring (yoki '+' bosing)${NC}"
+fi
 echo
 
-read -p "    pubspec.yaml versiya  [${PUBSPEC_NAME}]: " new_pname
-read -p "    pubspec.yaml build #  [${PUBSPEC_BUILD}]: " new_pbuild
+read -p "    pubspec.yaml versiya (versionName)  [${PUBSPEC_NAME}]: " new_pname
+read -p "    pubspec.yaml build # (versionCode)  [${PUBSPEC_BUILD}]: " new_pbuild
 new_pname=$(resolve_version_input "$new_pname" "$PUBSPEC_NAME")
 new_pbuild=$(resolve_version_input "$new_pbuild" "$PUBSPEC_BUILD")
 
-new_iversion=""; new_ibuild=""
-if $BUILD_IOS; then
+# iOS: faqat HARDCODED bo'lsa alohida so'raladi
+new_iversion="$new_pname"; new_ibuild="$new_pbuild"
+if $BUILD_IOS && ! $IOS_USES_FLUTTER_REF; then
   echo
+  info "iOS hardcoded versiya ishlatadi (pubspec'dan emas) — alohida kiriting:"
   read -p "    iOS versiya           [${IOS_VERSION}]: " new_iversion
   read -p "    iOS build number      [${IOS_BUILD}]: " new_ibuild
   new_iversion=$(resolve_version_input "$new_iversion" "$IOS_VERSION")
   new_ibuild=$(resolve_version_input "$new_ibuild" "$IOS_BUILD")
 fi
 
-new_aversion=""; new_abuild=""
-if $BUILD_ANDROID; then
+# Android: faqat HARDCODED bo'lsa alohida so'raladi
+new_aversion="$new_pname"; new_abuild="$new_pbuild"
+if $BUILD_ANDROID && ! $ANDROID_USES_FLUTTER_REF; then
   echo
+  info "Android hardcoded versiya ishlatadi (pubspec'dan emas) — alohida kiriting:"
   read -p "    Android versionName   [${ANDROID_VERSION}]: " new_aversion
   read -p "    Android versionCode   [${ANDROID_BUILD}]: " new_abuild
   new_aversion=$(resolve_version_input "$new_aversion" "$ANDROID_VERSION")
@@ -6590,9 +6611,33 @@ echo -e "  ${BOLD}Platformalar:${NC}  ${selected}"
 echo
 echo -e "  ${BOLD}Versiyalar (eski → yangi):${NC}"
 echo -e "    pubspec.yaml  : ${YELLOW}${PUBSPEC_NAME}+${PUBSPEC_BUILD}${NC} → ${GREEN}${new_pname}+${new_pbuild}${NC}"
-$BUILD_IOS     && echo -e "    iOS           : ${YELLOW}${IOS_VERSION} (${IOS_BUILD})${NC} → ${GREEN}${new_iversion} (${new_ibuild})${NC}"
-$BUILD_ANDROID && echo -e "    Android       : ${YELLOW}${ANDROID_VERSION} (${ANDROID_BUILD})${NC} → ${GREEN}${new_aversion} (${new_abuild})${NC}"
+# iOS qatorini ko'rsatish: Flutter ref bo'lsa "pubspec'dan", aks holda alohida qiymat
+if $BUILD_IOS; then
+  if $IOS_USES_FLUTTER_REF; then
+    echo -e "    iOS           : ${GREEN}${new_pname} (${new_pbuild})${NC}  ${BLUE}← pubspec.yaml'dan${NC}"
+  else
+    echo -e "    iOS           : ${YELLOW}${IOS_VERSION} (${IOS_BUILD})${NC} → ${GREEN}${new_iversion} (${new_ibuild})${NC}"
+  fi
+fi
+if $BUILD_ANDROID; then
+  if $ANDROID_USES_FLUTTER_REF; then
+    echo -e "    Android       : ${GREEN}${new_pname} (${new_pbuild})${NC}  ${BLUE}← pubspec.yaml'dan${NC}"
+  else
+    echo -e "    Android       : ${YELLOW}${ANDROID_VERSION} (${ANDROID_BUILD})${NC} → ${GREEN}${new_aversion} (${new_abuild})${NC}"
+  fi
+fi
 echo
+
+# v1.14.2: agar versiya umuman o'zgarmasa, ogohlantirish (upload conflict oldini olish)
+if [ "$new_pname" = "$PUBSPEC_NAME" ] && [ "$new_pbuild" = "$PUBSPEC_BUILD" ]; then
+  if $both_use_flutter_ref || { $BUILD_ANDROID && $ANDROID_USES_FLUTTER_REF; }; then
+    warn "Versiya o'zgarmadi (${PUBSPEC_NAME}+${PUBSPEC_BUILD})"
+    warn "Agar bu versiya allaqachon Store'ga yuklangan bo'lsa, upload xato beradi!"
+    info "Yangi versiya uchun: build # ni oshiring yoki '+' bosing"
+    echo
+  fi
+fi
+
 read -p "  Davom etamizmi? (y/n): " confirm
 [[ ! "${confirm}" =~ ^[Yy]$ ]] && { warn "Bekor qilindi — menyu'ga qaytdik"; return 1; }
 

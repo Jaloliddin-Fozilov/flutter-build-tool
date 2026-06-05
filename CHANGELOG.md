@@ -5,6 +5,93 @@ Loyihaning barcha muhim o'zgarishlari shu faylga yoziladi.
 Format [Keep a Changelog](https://keepachangelog.com/uz/1.1.0/) asosida,
 versiyalash esa [Semantic Versioning](https://semver.org/lang/uz/) qoidasiga rioya qiladi.
 
+## [1.14.2] — 2026-06-05
+
+### Tuzatildi — "App versiyasi oshmayapti" (Flutter reference chalkashligi)
+
+User report: "app versiyasi oshmayapti". Foydalanuvchi **Android versionCode**'ni
+`+` bilan oshirdi (1→2), lekin **pubspec build #** ni o'zgartirmadi. Natijada
+versiya o'zgarmadi.
+
+### Sabab — standart Flutter loyihasida pubspec yagona manba
+
+Standart Flutter loyihasida `android/app/build.gradle`:
+```gradle
+versionCode flutter.versionCode    // ← pubspec.yaml'dan o'qiladi
+versionName flutter.versionName
+```
+
+Demak **Android versionCode pubspec.yaml'dan olinadi**. Foydalanuvchi alohida
+"Android versionCode"'ni oshirsa ham, build pubspec'dan o'qigani uchun
+**e'tiborsiz qoladi**.
+
+Eski UX 2 ta alohida prompt ko'rsatardi:
+```
+pubspec.yaml build #  [1]:         ← Enter (o'zgarmadi)
+Android versionCode   [1]: +       ← oshirdi (lekin ta'sir qilmaydi!)
+```
+
+Foydalanuvchi Android'ni oshirdi, lekin pubspec +1 da qoldi → versiya 1.
+
+### Fix — Flutter reference bo'lsa, faqat pubspec so'raladi
+
+v1.14.2 da loyiha pubspec'ni manba sifatida ishlatsa:
+
+```
+✓ Bu loyiha pubspec.yaml'ni yagona manba sifatida ishlatadi
+ℹ (Android versionCode va iOS build number pubspec.yaml'dan olinadi)
+ℹ Versiya oshirish uchun pubspec build # ni oshiring (yoki '+' bosing)
+
+    pubspec.yaml versiya (versionName)  [1.0.0]:
+    pubspec.yaml build # (versionCode)  [1]: +
+```
+
+Endi **bitta** prompt — pubspec build #. `+` bossangiz, pubspec 1→2 ga oshadi
+va Android/iOS avtomatik oladi.
+
+Alohida Android/iOS prompt'lar **faqat hardcoded versiya** ishlatilganda
+ko'rsatiladi (Flutter reference emas).
+
+### Tasdiqlashda aniq ko'rsatish
+
+```
+Versiyalar (eski → yangi):
+  pubspec.yaml  : 1.0.0+1 → 1.0.0+2
+  Android       : 1.0.0 (2)  ← pubspec.yaml'dan
+```
+
+"← pubspec.yaml'dan" — foydalanuvchi qayerdan kelishini ko'radi.
+
+### Versiya o'zgarmaganda ogohlantirish
+
+```
+⚠ Versiya o'zgarmadi (1.0.0+1)
+⚠ Agar bu versiya allaqachon Store'ga yuklangan bo'lsa, upload xato beradi!
+ℹ Yangi versiya uchun: build # ni oshiring yoki '+' bosing
+```
+
+Bu **upload conflict** (versionCode allaqachon ishlatilgan) oldini oladi.
+
+### Foydalanuvchi tajribasi taqqoslash
+
+| Senariy | v1.14.1 | v1.14.2 |
+|---------|---------|---------|
+| Standart Flutter | 4 prompt (pubspec + Android + iOS) | 2 prompt (faqat pubspec) |
+| Android versionCode | Alohida (e'tiborsiz qolardi) | Pubspec'dan avtomatik |
+| `+` qaerda bosish | Chalkash (Android yoki pubspec?) | Aniq (faqat pubspec) |
+| Versiya o'zgarmasa | Jim | Ogohlantirish |
+
+### Texnik tafsilot
+
+**Single source of truth**: Flutter'ning version modeli pubspec.yaml'ni
+markaziy manba qiladi (`version: 1.0.0+1`). build.gradle va project.pbxproj
+shu qiymatni `flutter.versionCode` orqali oladi. UX bu modelга mos kelishi
+kerak — 2 ta alohida prompt bu invariantni buzadi va chalkashlik tug'diradi.
+
+**Conditional prompts**: `$ANDROID_USES_FLUTTER_REF` va `$IOS_USES_FLUTTER_REF`
+flag'lari asosida prompt'lar dinamik ko'rsatiladi. Bu **progressive disclosure** —
+faqat kerakli ma'lumot so'raladi.
+
 ## [1.14.1] — 2026-06-05
 
 ### 🔴 KRITIK TUZATISH — Build false positive (muvaffaqiyatsiz → "muvaffaqiyatli")
@@ -2433,6 +2520,7 @@ yangi yo'lni oladi (3 loyiha → 1 ta fayl tahriri).
 - AAB va APK formatlari, Production va Debug rejimlari.
 - Build natijalarini Finder'da avtomatik ochish.
 
+[1.14.2]: https://github.com/Jaloliddin-Fozilov/flutter-build-tool/releases/tag/v1.14.2
 [1.14.1]: https://github.com/Jaloliddin-Fozilov/flutter-build-tool/releases/tag/v1.14.1
 [1.14.0]: https://github.com/Jaloliddin-Fozilov/flutter-build-tool/releases/tag/v1.14.0
 [1.13.9]: https://github.com/Jaloliddin-Fozilov/flutter-build-tool/releases/tag/v1.13.9
