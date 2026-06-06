@@ -22,7 +22,7 @@
 set -eo pipefail
 
 # ─── Skript ma'lumotlari ──────────────────────────────────
-SCRIPT_VERSION="1.14.2"
+SCRIPT_VERSION="1.15.0"
 SCRIPT_REPO="Jaloliddin-Fozilov/flutter-build-tool"
 SCRIPT_RAW_URL="https://raw.githubusercontent.com/${SCRIPT_REPO}/main/flutter_build.sh"
 
@@ -610,6 +610,19 @@ read_git_last_commit() {
   git rev-parse --git-dir > /dev/null 2>&1 || return 1
   # %B = subject + body (full message)
   git log -1 --pretty=%B 2>/dev/null | head -20
+}
+
+# v1.15.0: Express rejim uchun release notes'ni avtomatik tanlash (savolsiz)
+# Prioritet: git oxirgi commit (birinchi qator) → "Version X" default
+express_auto_release_notes() {
+  local version="$1"
+  local git_msg
+  git_msg=$(read_git_last_commit 2>/dev/null | head -1)
+  if [ -n "$git_msg" ]; then
+    truncate_release_notes "$git_msg" 500
+  else
+    printf 'Version %s released' "$version"
+  fi
 }
 
 # CHANGELOG.md dan eng yangi versiya yozuvi (## [X.Y.Z] orasidan)
@@ -1207,23 +1220,38 @@ main_menu() {
     banner "Flutter Build Tool — Asosiy menu (v${SCRIPT_VERSION})"
 
     echo -e "  ${BOLD}╭─ Tanlovingiz ───────────────────────────────────────────╮${NC}"
-    echo -e "  ${BOLD}│${NC}  ${CYAN}1${NC}) ${BOLD}🚀 Build${NC} (build qilish + upload)                    ${BOLD}│${NC}"
-    echo -e "  ${BOLD}│${NC}  ${CYAN}2${NC}) ${BOLD}📤 Upload${NC} (build qilmasdan, oxirgisini yuklash)    ${BOLD}│${NC}"
-    echo -e "  ${BOLD}│${NC}  ${CYAN}3${NC}) ⚙️  Sozlamalar                                          ${BOLD}│${NC}"
-    echo -e "  ${BOLD}│${NC}  ${CYAN}4${NC}) 🩺 Doctor (tizim tekshiruvi)                            ${BOLD}│${NC}"
-    echo -e "  ${BOLD}│${NC}  ${CYAN}5${NC}) ⬆️  Android track promotion                              ${BOLD}│${NC}"
-    echo -e "  ${BOLD}│${NC}  ${CYAN}6${NC}) 📊 Rollout foizini oshirish                              ${BOLD}│${NC}"
-    echo -e "  ${BOLD}│${NC}  ${CYAN}7${NC}) 📋 Akkauntlar va loyihalarni ko'rish                     ${BOLD}│${NC}"
+    echo -e "  ${BOLD}│${NC}  ${CYAN}1${NC}) ${BOLD}⚡ Auto Deploy${NC} (savolsiz: build + versiya+1 + upload)  ${BOLD}│${NC}"
+    echo -e "  ${BOLD}│${NC}  ${CYAN}2${NC}) ${BOLD}🚀 Build${NC} (qadam-baqadam: build + upload)             ${BOLD}│${NC}"
+    echo -e "  ${BOLD}│${NC}  ${CYAN}3${NC}) ${BOLD}📤 Upload${NC} (build qilmasdan, oxirgisini yuklash)    ${BOLD}│${NC}"
+    echo -e "  ${BOLD}│${NC}  ${CYAN}4${NC}) ⚙️  Sozlamalar                                          ${BOLD}│${NC}"
+    echo -e "  ${BOLD}│${NC}  ${CYAN}5${NC}) 🩺 Doctor (tizim tekshiruvi)                            ${BOLD}│${NC}"
+    echo -e "  ${BOLD}│${NC}  ${CYAN}6${NC}) ⬆️  Android track promotion                              ${BOLD}│${NC}"
+    echo -e "  ${BOLD}│${NC}  ${CYAN}7${NC}) 📊 Rollout foizini oshirish                              ${BOLD}│${NC}"
+    echo -e "  ${BOLD}│${NC}  ${CYAN}8${NC}) 📋 Akkauntlar va loyihalarni ko'rish                     ${BOLD}│${NC}"
     echo -e "  ${BOLD}├─────────────────────────────────────────────────────────${NC}"
     echo -e "  ${BOLD}│${NC}  ${CYAN}q${NC}) Chiqish                                                   ${BOLD}│${NC}"
     echo -e "  ${BOLD}╰─────────────────────────────────────────────────────────${NC}"
     echo
-    read -p "  Tanlang [1-7, q] [1]: " choice
+    read -p "  Tanlang [1-8, q] [1]: " choice
     choice="${choice:-1}"
 
     case "$choice" in
       1)
+        # v1.15.0: Express (Auto Deploy) — savolsiz auto deploy
+        EXPRESS_MODE=true
+        if main_build_flow; then
+          EXPRESS_MODE=false
+          exit 0
+        else
+          EXPRESS_MODE=false
+          echo
+          warn "Auto Deploy bekor qilindi yoki xato berdi — menyu'ga qaytdik"
+          pause
+        fi
+        ;;
+      2)
         # Build flow — main_build_flow chaqiriladi (skript pastida aniqlangan)
+        EXPRESS_MODE=false
         if main_build_flow; then
           # Build muvaffaqiyatli — skript chiqadi
           exit 0
@@ -1234,7 +1262,7 @@ main_menu() {
           pause
         fi
         ;;
-      2)
+      3)
         # v1.13.0: Upload-only — build qilmasdan oxirgi artifact'ni yuklash
         if upload_only_flow; then
           echo
@@ -1246,20 +1274,20 @@ main_menu() {
           pause
         fi
         ;;
-      3)
+      4)
         settings_main_menu
         ;;
-      4)
+      5)
         run_diagnostics
         pause
         ;;
-      5)
+      6)
         menu_promote_interactive
         ;;
-      6)
+      7)
         menu_rollout_interactive
         ;;
-      7)
+      8)
         menu_view_accounts_and_projects
         ;;
       q|Q)
@@ -1672,6 +1700,8 @@ PROMOTE_FROM=""
 PROMOTE_TO=""
 INCREASE_ROLLOUT_MODE=false
 INCREASE_ROLLOUT_PCT=""
+EXPRESS_MODE=false
+EXPRESS_CLI=false   # v1.15.0: --auto flag bilan to'g'ridan-to'g'ri express
 i=0
 args=("$@")
 while [ "$i" -lt "${#args[@]}" ]; do
@@ -1679,6 +1709,9 @@ while [ "$i" -lt "${#args[@]}" ]; do
   case "$arg" in
     --no-update-check|--skip-update)
       SKIP_UPDATE=true
+      ;;
+    --auto|--express|-a)
+      EXPRESS_CLI=true
       ;;
     --settings|-s)
       SETTINGS_MODE=true
@@ -1712,6 +1745,7 @@ Flutter Build Tool v${SCRIPT_VERSION}
 
 Foydalanish:
   ./flutter_build.sh                              Interaktiv build
+  ./flutter_build.sh --auto, --express, -a        ⚡ Savolsiz auto deploy (build + versiya+1 + upload)
   ./flutter_build.sh --settings, -s               Sozlamalar menyusi
   ./flutter_build.sh --doctor, -d                 Tizim diagnostikasi (nima ishlamayotganini ko'rish)
   ./flutter_build.sh --promote-android FROM TO    Track promotion (Android)
@@ -1795,6 +1829,20 @@ if $INCREASE_ROLLOUT_MODE; then
   fi
   play_increase_rollout "$INCREASE_ROLLOUT_PCT"
   exit $?
+fi
+
+# v1.15.0: Express CLI rejimi (--auto) — to'g'ridan-to'g'ri savolsiz deploy
+if $EXPRESS_CLI; then
+  if [ ! -f "pubspec.yaml" ]; then
+    err "pubspec.yaml topilmadi (Flutter loyihasi ildizidan ishga tushiring)"
+    exit 1
+  fi
+  EXPRESS_MODE=true
+  if main_build_flow; then
+    exit 0
+  else
+    exit 1
+  fi
 fi
 
 # ─── Arrow-key checkbox menyusi ───────────────────────────
@@ -6424,10 +6472,87 @@ handle_android_build_failure() {
   return 1
 }
 
+# v1.15.0: Express (Auto Deploy) rejimi konfiguratsiyasi
+# Per-project config asosida barcha build flag'larni AVTOMATIK o'rnatadi —
+# foydalanuvchidan hech narsa so'ramaydi. Faqat sozlanmagan loyiha bo'lsa,
+# minimal sozlash so'raydi (keystore/account birinchi marta).
+#
+# Global flag'larni o'rnatadi: IS_PROD, MODE_LABEL, BUILD_ANDROID, BUILD_IOS,
+#   BUILD_AAB, BUILD_APK, DO_CLEAN, DO_PUBGET, DO_APPSTORE_UPLOAD, DO_PLAYSTORE_UPLOAD
+#
+# Returns:
+#   0 — konfiguratsiya tayyor, deploy qilish mumkin
+#   1 — sozlanmagan yoki bekor (interaktiv rejimga qaytish kerak)
+express_configure() {
+  step "⚡ Express (Auto Deploy) — sozlamalar avtomatik aniqlanmoqda"
+  echo
+
+  # Production rejim — deploy uchun har doim
+  IS_PROD=true
+  MODE_LABEL="PRODUCTION"
+  BUILD_AAB=true
+  BUILD_APK=false
+  DO_CLEAN=false
+  DO_PUBGET=false
+  BUILD_ANDROID=false
+  BUILD_IOS=false
+  DO_PLAYSTORE_UPLOAD=false
+  DO_APPSTORE_UPLOAD=false
+
+  # Android konfiguratsiyasini tekshirish
+  local pkg android_account
+  pkg=$(detect_android_package_name 2>/dev/null)
+  if [ -n "$pkg" ]; then
+    android_account=$(play_project_config_get "$pkg" "account" 2>/dev/null)
+    if [ -n "$android_account" ] && play_account_exists "$android_account"; then
+      BUILD_ANDROID=true
+      DO_PLAYSTORE_UPLOAD=true
+      local track
+      track=$(play_project_config_get "$pkg" "track" 2>/dev/null)
+      track="${track:-internal}"
+      ok "Android: ${BOLD}${pkg}${NC}"
+      info "   Akkaunt: ${android_account}  |  Track: ${track}"
+    else
+      info "Android: ${pkg} — Play Store akkaunti sozlanmagan (o'tkazib yuboriladi)"
+    fi
+  fi
+
+  # iOS konfiguratsiyasini tekshirish (faqat macOS)
+  if [ "$(uname)" = "Darwin" ]; then
+    local bundle ios_account
+    bundle=$(detect_ios_bundle_id 2>/dev/null)
+    if [ -n "$bundle" ]; then
+      ios_account=$(appstore_project_config_get "$bundle" "account" 2>/dev/null)
+      if [ -n "$ios_account" ] && appstore_account_exists "$ios_account" 2>/dev/null; then
+        BUILD_IOS=true
+        DO_APPSTORE_UPLOAD=true
+        ok "iOS: ${BOLD}${bundle}${NC}"
+        info "   Akkaunt: ${ios_account}"
+      else
+        info "iOS: ${bundle} — App Store akkaunti sozlanmagan (o'tkazib yuboriladi)"
+      fi
+    fi
+  fi
+
+  echo
+  # Hech bo'lmasa bitta platforma sozlangan bo'lishi kerak
+  if ! $BUILD_ANDROID && ! $BUILD_IOS; then
+    warn "Express rejim uchun hech qaysi platforma sozlanmagan"
+    info "Avval oddiy build/upload bilan akkaunt va keystore'ni sozlang:"
+    info "  ${BOLD}flutter-build${NC} → 1) Build (to'liq sozlash)"
+    info "Sozlangach, Express rejim ishlaydi"
+    return 1
+  fi
+
+  return 0
+}
+
 # ─── Asosiy build oqimi (v1.10.0: funksiyaga o'ralgan) ─────
 # Return codes:
 #   0 — build muvaffaqiyatli
 #   1 — bekor qilindi yoki xato (main_menu'ga qaytadi)
+# v1.15.0: EXPRESS_MODE=true bo'lsa, wizard/version/confirmation o'tkazib
+#   yuboriladi — savolsiz auto deploy.
 main_build_flow() {
 
 # ─── Validatsiya ──────────────────────────────────────────
@@ -6530,9 +6655,17 @@ BUILD_APK=false
 DO_APPSTORE_UPLOAD=false
 DO_PLAYSTORE_UPLOAD=false
 
-if ! run_build_wizard; then
-  warn "Build bekor qilindi — asosiy menyu'ga qaytdik"
-  return 1
+# v1.15.0: Express rejim — wizard o'rniga avtomatik konfiguratsiya
+if [ "${EXPRESS_MODE:-false}" = "true" ]; then
+  if ! express_configure; then
+    warn "Express rejim ishlamadi — oddiy rejimga o'ting"
+    return 1
+  fi
+else
+  if ! run_build_wizard; then
+    warn "Build bekor qilindi — asosiy menyu'ga qaytdik"
+    return 1
+  fi
 fi
 
 # Tanlangan platformalarni inson o'qiy oladigan satrga to'plash
@@ -6559,6 +6692,31 @@ $DO_PUBGET && ok "flutter pub get: ${GREEN}yoqilgan${NC}" || info "flutter pub g
 # ko'rsatardik — foydalanuvchi uni oshirardi, lekin pubspec o'zgarmagani uchun
 # ta'sir qilmasdi ("versiya oshmayapti"). Endi: Flutter reference bo'lsa, faqat
 # pubspec so'raladi (yagona manba). Hardcoded bo'lsagina alohida so'raladi.
+# v1.15.0: Express rejim — versiyani avtomatik +1 oshiradi, savol so'ramaydi
+if [ "${EXPRESS_MODE:-false}" = "true" ]; then
+  new_pname="$PUBSPEC_NAME"
+  # build raqamini avtomatik +1 (resolve_version_input '+' bilan)
+  new_pbuild=$(resolve_version_input "+" "$PUBSPEC_BUILD")
+  new_iversion="$new_pname"; new_ibuild="$new_pbuild"
+  new_aversion="$new_pname"; new_abuild="$new_pbuild"
+  step "⚡ Express: versiya avtomatik oshirildi"
+  ok "Versiya: ${YELLOW}${PUBSPEC_NAME}+${PUBSPEC_BUILD}${NC} → ${GREEN}${new_pname}+${new_pbuild}${NC}"
+  # pubspec'ni yangilaymiz (Android/iOS Flutter ref orqali avtomatik oladi)
+  if [ "$new_pbuild" != "$PUBSPEC_BUILD" ]; then
+    update_pubspec_version "$new_pname" "$new_pbuild"
+    ok "pubspec.yaml yangilandi: ${new_pname}+${new_pbuild}"
+  fi
+  # Hardcoded versiya bo'lsa, ularni ham yangilaymiz
+  if $BUILD_IOS && [ -f "$IOS_PROJECT" ] && ! $IOS_USES_FLUTTER_REF; then
+    update_ios_version "$IOS_PROJECT" "$new_iversion" "$new_ibuild"
+  fi
+  if $BUILD_ANDROID && [ -n "$ANDROID_GRADLE" ] && ! $ANDROID_USES_FLUTTER_REF; then
+    update_android_version "$ANDROID_GRADLE" "$new_aversion" "$new_abuild"
+  fi
+  # Express'da release notes avtomatik (git commit yoki default)
+  RELEASE_NOTES=$(express_auto_release_notes "$new_pname")
+  STAGED_ROLLOUT_FRACTION="1.0"
+else  # ── Oddiy interaktiv rejim ──
 step "Yangi versiyalarni kiriting"
 info "Enter — hozirgi qiymatni saqlaydi  |  + — oxirgi raqamni +1 ga oshirish"
 
@@ -6672,6 +6830,8 @@ if $BUILD_ANDROID && [ -n "$ANDROID_GRADLE" ]; then
     info "${ANDROID_GRADLE} o'zgarmadi: ${ANDROID_VERSION} (${ANDROID_BUILD})"
   fi
 fi
+
+fi  # ← v1.15.0: EXPRESS_MODE if/else oxiri (version input + confirmation + file update)
 
 # ─── 7. Production tekshiruvi (Android signing) ───────────
 if $IS_PROD && $BUILD_ANDROID; then
@@ -6803,41 +6963,50 @@ if $DO_PLAYSTORE_UPLOAD; then
     return 1
   }
 
-  # Release notes yig'ish (har upload uchun yangi)
-  RELEASE_NOTES=$(collect_release_notes "$new_pname" "$new_pbuild")
-
-  # Staged rollout — agar production track tanlangan bo'lsa
-  STAGED_ROLLOUT_FRACTION=""
   current_pkg_for_upload=$(detect_android_package_name)
   current_track=$(play_project_config_get "$current_pkg_for_upload" "track")
-  if [ "$current_track" = "production" ]; then
-    echo
-    info "Production track tanlandi — staged rollout"
-    echo -e "  ${BOLD}Foydalanuvchilarga foiz bilan release:${NC}"
-    echo -e "    ${CYAN}1${NC}) 100%  — barchaga darrov (default)"
-    echo -e "    ${CYAN}2${NC}) 50%   — yarmiga"
-    echo -e "    ${CYAN}3${NC}) 10%   — sinov uchun (keyinroq oshirish mumkin)"
-    echo -e "    ${CYAN}4${NC}) 1%    — minimal sinov"
-    echo -e "    ${CYAN}5${NC}) Custom %"
-    echo
-    read -p "  Tanlang [1-5] [1]: " roll_choice
-    case "${roll_choice:-1}" in
-      1) STAGED_ROLLOUT_FRACTION="1.0" ;;
-      2) STAGED_ROLLOUT_FRACTION="0.5" ;;
-      3) STAGED_ROLLOUT_FRACTION="0.1" ;;
-      4) STAGED_ROLLOUT_FRACTION="0.01" ;;
-      5)
-        read -p "    Foiz (1-100): " custom_pct
-        if [[ "$custom_pct" =~ ^[0-9]+$ ]] && [ "$custom_pct" -ge 1 ] && [ "$custom_pct" -le 100 ]; then
-          STAGED_ROLLOUT_FRACTION=$(awk "BEGIN{printf \"%.4f\", $custom_pct / 100}")
-        else
-          warn "Noto'g'ri foiz, 100% ishlatamiz"
-          STAGED_ROLLOUT_FRACTION="1.0"
-        fi
-        ;;
-      *) STAGED_ROLLOUT_FRACTION="1.0" ;;
-    esac
-    ok "Rollout: $(awk "BEGIN{printf \"%.0f\", $STAGED_ROLLOUT_FRACTION * 100}")%"
+
+  # v1.15.0: Express rejim — release notes va rollout avtomatik (so'ramaydi)
+  if [ "${EXPRESS_MODE:-false}" = "true" ]; then
+    # RELEASE_NOTES va STAGED_ROLLOUT_FRACTION allaqachon o'rnatilgan (express bosqichda)
+    [ -z "$RELEASE_NOTES" ] && RELEASE_NOTES=$(express_auto_release_notes "$new_pname")
+    [ -z "$STAGED_ROLLOUT_FRACTION" ] && STAGED_ROLLOUT_FRACTION="1.0"
+    info "⚡ Express: release notes avtomatik | rollout 100%"
+  else
+    # Release notes yig'ish (har upload uchun yangi)
+    RELEASE_NOTES=$(collect_release_notes "$new_pname" "$new_pbuild")
+
+    # Staged rollout — agar production track tanlangan bo'lsa
+    STAGED_ROLLOUT_FRACTION=""
+    if [ "$current_track" = "production" ]; then
+      echo
+      info "Production track tanlandi — staged rollout"
+      echo -e "  ${BOLD}Foydalanuvchilarga foiz bilan release:${NC}"
+      echo -e "    ${CYAN}1${NC}) 100%  — barchaga darrov (default)"
+      echo -e "    ${CYAN}2${NC}) 50%   — yarmiga"
+      echo -e "    ${CYAN}3${NC}) 10%   — sinov uchun (keyinroq oshirish mumkin)"
+      echo -e "    ${CYAN}4${NC}) 1%    — minimal sinov"
+      echo -e "    ${CYAN}5${NC}) Custom %"
+      echo
+      read -p "  Tanlang [1-5] [1]: " roll_choice
+      case "${roll_choice:-1}" in
+        1) STAGED_ROLLOUT_FRACTION="1.0" ;;
+        2) STAGED_ROLLOUT_FRACTION="0.5" ;;
+        3) STAGED_ROLLOUT_FRACTION="0.1" ;;
+        4) STAGED_ROLLOUT_FRACTION="0.01" ;;
+        5)
+          read -p "    Foiz (1-100): " custom_pct
+          if [[ "$custom_pct" =~ ^[0-9]+$ ]] && [ "$custom_pct" -ge 1 ] && [ "$custom_pct" -le 100 ]; then
+            STAGED_ROLLOUT_FRACTION=$(awk "BEGIN{printf \"%.4f\", $custom_pct / 100}")
+          else
+            warn "Noto'g'ri foiz, 100% ishlatamiz"
+            STAGED_ROLLOUT_FRACTION="1.0"
+          fi
+          ;;
+        *) STAGED_ROLLOUT_FRACTION="1.0" ;;
+      esac
+      ok "Rollout: $(awk "BEGIN{printf \"%.0f\", $STAGED_ROLLOUT_FRACTION * 100}")%"
+    fi
   fi
 
   # v1.12.3: faqat muvaffaqiyatli upload'dan keyin promote taklif qilamiz.

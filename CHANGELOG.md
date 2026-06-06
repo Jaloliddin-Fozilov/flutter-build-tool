@@ -5,6 +5,111 @@ Loyihaning barcha muhim o'zgarishlari shu faylga yoziladi.
 Format [Keep a Changelog](https://keepachangelog.com/uz/1.1.0/) asosida,
 versiyalash esa [Semantic Versioning](https://semver.org/lang/uz/) qoidasiga rioya qiladi.
 
+## [1.15.0] — 2026-06-05
+
+### Qo'shildi — ⚡ **Auto Deploy (Express) rejimi** — savolsiz deploy
+
+User savol: "bizga bitta mode kerak yani uni yoqsam ortiqcha savollarsiz auto
+deploy qilishi kerak".
+
+Mukammal — endi asosiy menyuda **1-o'rinda**:
+
+```
+╭─ Tanlovingiz ───────────────────────────────────────────╮
+│  1) ⚡ Auto Deploy (savolsiz: build + versiya+1 + upload)  ← YANGI
+│  2) 🚀 Build (qadam-baqadam: build + upload)
+│  3) 📤 Upload (build qilmasdan, oxirgisini yuklash)
+│  ...
+```
+
+### Auto Deploy nima qiladi (savolsiz)
+
+Bir marta tanlasangiz, **hech narsa so'ramaydi**:
+
+1. **Konfiguratsiya avtomatik aniqlanadi** — per-project sozlamalardan
+   (Android Play akkaunt, iOS App Store akkaunt, track)
+2. **Production rejim** — release, signed
+3. **Versiya +1** — pubspec build # avtomatik oshiriladi
+4. **Release notes avtomatik** — git oxirgi commit (yoki "Version X released")
+5. **Build** — exit code tekshirish + R8 auto-fix (v1.14.1)
+6. **Upload** — sozlangan track'ga (internal/production)
+7. **Rollout 100%** — production uchun
+
+### Foydalanish — 2 usul
+
+**Menyu orqali:**
+```
+flutter-build → 1) Auto Deploy
+```
+
+**CLI orqali (alias/script uchun):**
+```bash
+flutter-build --auto      # yoki --express, yoki -a
+```
+
+### Misol oqim
+
+```
+⚡ Express (Auto Deploy) — sozlamalar avtomatik aniqlanmoqda
+
+✓ Android: uz.gennis.todo
+   Akkaunt: deploy  |  Track: internal
+
+⚡ Express: versiya avtomatik oshirildi
+✓ Versiya: 1.0.0+5 → 1.0.0+6
+✓ pubspec.yaml yangilandi: 1.0.0+6
+
+▶ Android build (PRODUCTION)
+[build...]
+✓ Android build muvaffaqiyatli (exit code 0)
+
+⚡ Express: release notes avtomatik | rollout 100%
+[upload...]
+✓ Muvaffaqiyatli yuklandi!
+```
+
+### Birinchi marta sozlash kerak
+
+Auto Deploy **sozlangan loyiha** uchun. Agar loyiha hali sozlanmagan bo'lsa
+(akkaunt/keystore yo'q), aniq xabar beradi:
+
+```
+⚠ Express rejim uchun hech qaysi platforma sozlanmagan
+ℹ Avval oddiy build/upload bilan akkaunt va keystore'ni sozlang:
+ℹ   flutter-build → 2) Build (to'liq sozlash)
+ℹ Sozlangach, Express rejim ishlaydi
+```
+
+Bir marta oddiy build bilan sozlangach, keyin Auto Deploy ishlaydi.
+
+### Yangi funksiyalar
+
+- `express_configure` — per-project config'dan barcha flag'larni avtomatik
+  o'rnatadi (Android/iOS aniqlash, account, track)
+- `express_auto_release_notes` — git commit'dan yoki default release notes
+- `--auto` / `--express` / `-a` CLI flag
+
+### Multi-platforma
+
+Agar loyiha **ham Android ham iOS** sozlangan bo'lsa, Auto Deploy ikkalasini
+ham deploy qiladi (Android keyin iOS). Faqat bittasi sozlangan bo'lsa,
+o'shanisini.
+
+### Texnik tafsilot
+
+**DRY composition**: Express rejim mavjud `main_build_flow`'ni `EXPRESS_MODE`
+flag bilan reuse qiladi. Wizard, version prompt, confirmation, release notes
+prompt, rollout prompt — barchasi `EXPRESS_MODE` tekshiruvi bilan o'tkazib
+yuboriladi. Yangi kod minimal — bitta `express_configure` + flag tekshiruvlari.
+
+**Config-driven automation**: Express rejim avval sozlangan per-project
+config'ga tayanadi (account, track). Bu **convention over configuration** —
+foydalanuvchi bir marta sozlaydi, keyin avtomatika ishlaydi.
+
+**Safety preserved**: Express rejim ham build exit code'ini tekshiradi (v1.14.1),
+R8 auto-fix qiladi, versiya conflict'ni oldini oladi. Tezlik xavfsizlik
+hisobidan emas.
+
 ## [1.14.2] — 2026-06-05
 
 ### Tuzatildi — "App versiyasi oshmayapti" (Flutter reference chalkashligi)
@@ -2520,6 +2625,7 @@ yangi yo'lni oladi (3 loyiha → 1 ta fayl tahriri).
 - AAB va APK formatlari, Production va Debug rejimlari.
 - Build natijalarini Finder'da avtomatik ochish.
 
+[1.15.0]: https://github.com/Jaloliddin-Fozilov/flutter-build-tool/releases/tag/v1.15.0
 [1.14.2]: https://github.com/Jaloliddin-Fozilov/flutter-build-tool/releases/tag/v1.14.2
 [1.14.1]: https://github.com/Jaloliddin-Fozilov/flutter-build-tool/releases/tag/v1.14.1
 [1.14.0]: https://github.com/Jaloliddin-Fozilov/flutter-build-tool/releases/tag/v1.14.0

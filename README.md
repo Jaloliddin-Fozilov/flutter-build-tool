@@ -30,6 +30,7 @@ flutter-build
 
 ## Imkoniyatlar
 
+- **⚡ Auto Deploy (Express) rejimi** — bir marta tanlasangiz, savolsiz: build + versiya+1 + upload. Per-project sozlamalardan avtomatik aniqlaydi. `flutter-build --auto` yoki menyuda 1-band. Sozlangan loyiha uchun bir buyruqda to'liq deploy.
 - **Interaktiv UI** — strelkalar bilan boshqariladigan checkbox menyu
 - **Versiya boshqaruvi** — `pubspec.yaml`, iOS `project.pbxproj`, Android `build.gradle` ni avtomatik sinxronlaydi
 - **`+` qisqartmasi** — versiya yoki build kiritishda `+` bossangiz, oxirgi raqam +1 ga oshadi (`1.0.23` → `1.0.24`, `34` → `35`)
@@ -80,6 +81,7 @@ flutter-build
 
 | Bayroq | Tavsifi |
 |--------|---------|
+| `--auto`, `--express`, `-a` | ⚡ Savolsiz auto deploy (build + versiya+1 + upload) |
 | `--version`, `-v` | Versiyani ko'rsatish |
 | `--help`, `-h` | Yordam |
 | `--settings`, `-s` | Sozlamalar menyusi (default'larni oldindan sozlash) |
