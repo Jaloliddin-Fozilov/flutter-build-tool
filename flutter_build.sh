@@ -22,7 +22,7 @@
 set -eo pipefail
 
 # ─── Skript ma'lumotlari ──────────────────────────────────
-SCRIPT_VERSION="1.15.1"
+SCRIPT_VERSION="1.15.2"
 SCRIPT_REPO="Jaloliddin-Fozilov/flutter-build-tool"
 SCRIPT_RAW_URL="https://raw.githubusercontent.com/${SCRIPT_REPO}/main/flutter_build.sh"
 
@@ -52,8 +52,24 @@ info() { echo -e "  ${CYAN}ℹ${NC} $1"; }
 
 # pause — foydalanuvchi Enter bosishini kutish (menyu o'qilishi uchun)
 pause() {
+  # v1.15.2: Express rejimda kutmaymiz (to'liq avtomatik)
+  [ "${EXPRESS_MODE:-false}" = "true" ] && return 0
   echo
   read -p "  ${1:-Davom etish uchun Enter...}" _
+}
+
+# v1.15.2: Express rejimda prompt'larni avtomatik default bilan tasdiqlash.
+# EXPRESS_MODE=true bo'lsa: default qiymatni o'zgaruvchiga qo'yadi (read qilmaydi,
+# kutmaydi). Aks holda: oddiy read -p bilan so'raydi.
+# Args: <varname> <default> <prompt_text>
+express_read() {
+  local __ervar="$1" __erdef="$2" __erprompt="$3"
+  if [ "${EXPRESS_MODE:-false}" = "true" ]; then
+    printf '%s%s[⚡ auto: %s]%s\n' "$__erprompt" "${BOLD}" "$__erdef" "${NC}" >&2
+    printf -v "$__ervar" '%s' "$__erdef"
+  else
+    read -p "$__erprompt" "$__ervar"
+  fi
 }
 
 # try_this — xatodan keyin foydalanuvchiga aniq recovery buyrug'(lar)ni ko'rsatish.
@@ -2672,6 +2688,21 @@ setup_android_signing() {
   local has_props=false
   [ -f "android/key.properties" ] && has_props=true
 
+  # v1.15.2: Express rejim — key.properties bor bo'lsa, savol bermaymiz (joriy
+  # keystore bilan davom). Yo'q bo'lsa, express avtomatik yarata olmaydi (parol
+  # kerak) — xato berib chiqamiz.
+  if [ "${EXPRESS_MODE:-false}" = "true" ]; then
+    if $has_props; then
+      info "android/key.properties topildi — joriy keystore bilan davom (Express)"
+      return 0
+    else
+      err "android/key.properties topilmadi — Express rejim signing'siz davom eta olmaydi"
+      info "Avval bir marta oddiy build bilan keystore sozlang:"
+      info "  ${BOLD}flutter-build${NC} → 2) Build → Android → keystore yarating/ulang"
+      exit 1
+    fi
+  fi
+
   if $has_props; then
     info "android/key.properties topildi"
     show_key_properties || true
@@ -3321,6 +3352,14 @@ ensure_export_options() {
     return 0
   fi
 
+  # v1.15.2: Express rejim — plist yo'q bo'lsa avtomatik yarata olmaydi (Team ID kerak)
+  if [ "${EXPRESS_MODE:-false}" = "true" ]; then
+    err "${plist} topilmadi — Express rejim avtomatik yarata olmaydi (Team ID kerak)"
+    info "Avval bir marta oddiy build bilan sozlang:"
+    info "  ${BOLD}flutter-build${NC} → 2) Build → iOS → ExportOptions yarating"
+    return 1
+  fi
+
   warn "${plist} topilmadi"
   info "Bu fayl 'flutter build ipa --export-options-plist' uchun kerak"
   echo
@@ -3776,7 +3815,7 @@ appstore_upload_via_apple_id_transporter() {
     info "  Xuddi shu Apple ID + password ishlatadi, lekin xcrun altool"
     info "  (Apple'ning native binary'si — Java kerak emas, ishonchli)"
     echo
-    read -p "  Hozir altool bilan qayta urinaylikmi? (y/n) [y]: " try_altool
+    express_read try_altool "y" "  Hozir altool bilan qayta urinaylikmi? (y/n) [y]: "
     if [[ ! "$try_altool" =~ ^[Nn]$ ]]; then
       echo
       info "altool bilan qayta urinish..."
@@ -4595,6 +4634,8 @@ play_promote_release() {
 # Post-upload promotion taklifi (per-project flow asosida)
 play_suggest_promotion() {
   local pkg="$1" current_track="$2"
+  # v1.15.2: Express rejim — promotion taklif qilmaymiz (savolsiz auto deploy)
+  [ "${EXPRESS_MODE:-false}" = "true" ] && return 0
   local flow
   flow=$(play_project_config_get "$pkg" "promotion_flow")
   flow="${flow:-internal_to_prod}"
@@ -4823,6 +4864,16 @@ extract_json_number() {
 play_handle_bundle_403() {
   local package_name="$1" aab_path="$2" track="$3"
 
+  # v1.15.2: Express rejim — interaktiv menyu emas, xabar berib chiqamiz (kutmaymiz)
+  if [ "${EXPRESS_MODE:-false}" = "true" ]; then
+    echo
+    warn "${BOLD}AAB upload 403${NC} — Express rejimda to'xtatildi (savol berilmaydi)"
+    info "Eng ehtimol: yangi app — birinchi release Play Console UI orqali qo'lda kerak"
+    info "Yoki SA'da 'release' ruxsati yo'q"
+    info "Qo'lda hal qilish: ${BOLD}flutter-build${NC} → 2) Build (Express emas) → 403 menyusi"
+    return 1
+  fi
+
   echo
   warn "${BOLD}AAB upload 403 — eng tez-tez uchraydigan sabab:${NC}"
   echo
@@ -4895,6 +4946,16 @@ play_handle_bundle_403() {
 #   1 — boshqa yo'l bilan davom etildi (qo'lda yoki saqlandi)
 play_handle_commit_403() {
   local edit_id="$1" api_base="$2" jwt="$3" package_name="$4" sa_email="$5" aab_path="$6" track="$7"
+
+  # v1.15.2: Express rejim — interaktiv menyu emas, xabar berib chiqamiz (kutmaymiz)
+  if [ "${EXPRESS_MODE:-false}" = "true" ]; then
+    echo
+    warn "${BOLD}Commit 403${NC} — Express rejimda to'xtatildi (savol berilmaydi)"
+    info "Sabab: Service Account'da 'Release' ruxsati yo'q"
+    info "Edit ID saqlandi (24 soat amal qiladi): ${BOLD}${edit_id}${NC}"
+    info "Qo'lda hal qilish: ${BOLD}flutter-build${NC} → 2) Build (Express emas) → 403 menyusi"
+    return 1
+  fi
 
   echo
   echo -e "  ${BOLD}╭─ Bu vaziyatda qaysi variant siznikiga eng yaqin? ──────╮${NC}"

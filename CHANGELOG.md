@@ -5,6 +5,85 @@ Loyihaning barcha muhim o'zgarishlari shu faylga yoziladi.
 Format [Keep a Changelog](https://keepachangelog.com/uz/1.1.0/) asosida,
 versiyalash esa [Semantic Versioning](https://semver.org/lang/uz/) qoidasiga rioya qiladi.
 
+## [1.15.2] — 2026-06-08
+
+### Tuzatildi — Auto mode endi **TO'LIQ avtomatik** (hech qanday prompt)
+
+User report: "auto mode to'liq auto bo'lishi kerak. Hozir altool bilan qayta
+urinaylikmi? (y/n) [y]: y — y ni bosib tasdiqlashim yoki boshqa narsalarni
+kutmasin".
+
+### Sabab
+
+v1.15.1 da Express rejim asosiy oqimni avtomat qildi, lekin **upload paytidagi
+ba'zi prompt'lar** hali ham `y` kutardi:
+- iOS Transporter → altool fallback: "Hozir altool bilan qayta urinaylikmi?"
+- Play Store 403 recovery menyusi
+- Android signing tanlovi (key.properties bor bo'lsa ham)
+- `pause` ("Davom etish uchun Enter...")
+- Promotion taklifi ("Hozir promote qilamizmi?")
+
+### Fix — barcha deploy prompt'lari Express'da avtomatik
+
+Yangi `express_read` helper: EXPRESS_MODE'da prompt'ni **o'qimaydi**, default'ni
+darrov qaytaradi:
+
+```
+Hozir altool bilan qayta urinaylikmi? (y/n) [y]: [⚡ auto: y]
+[darrov altool ishga tushadi — kutish yo'q]
+```
+
+Guard qo'yilgan joylar:
+
+| Prompt | Express xulqi |
+|--------|---------------|
+| `pause` ("Enter...") | O'tkazib yuboriladi (kutmaydi) |
+| altool fallback (y/n) | Avtomatik `y` (altool ishlaydi) |
+| Android signing tanlovi | key.properties bor → joriy keystore (savol yo'q) |
+| ExportOptions yaratish | Bor → ishlatadi; yo'q → xato (yarata olmaydi) |
+| promotion taklifi | O'tkazib yuboriladi |
+| Commit 403 menyusi | Xabar berib chiqadi (kutmaydi) |
+| Bundle 403 menyusi | Xabar berib chiqadi (kutmaydi) |
+
+### Error path'lar ham kutmaydi
+
+Agar Express'da 403 yoki signing muammosi chiqsa, **interaktiv menyu
+ko'rsatilmaydi** — qisqa xabar beriladi va to'xtaydi (hang yo'q):
+
+```
+⚠ Commit 403 — Express rejimda to'xtatildi (savol berilmaydi)
+ℹ Sabab: Service Account'da 'Release' ruxsati yo'q
+ℹ Edit ID saqlandi (24 soat amal qiladi): 0633...
+ℹ Qo'lda hal qilish: flutter-build → 2) Build (Express emas) → 403 menyusi
+```
+
+### Endi Auto mode oqimi (0 ta savol)
+
+```
+flutter-build --auto
+
+⚡ Express — platforma tanlash (faqat 2+ sozlangan bo'lsa)
+[checkbox — yagona savol]
+
+⚡ Versiya +1 avtomatik
+▶ Build (exit code check + R8 auto-fix)
+▶ iOS upload (Transporter buzilsa → altool avtomatik)
+▶ Play upload
+✓ Tugadi
+```
+
+Platforma checkbox'dan keyin **hech narsa so'ralmaydi** — to'liq avtomatik.
+
+### Texnik tafsilot
+
+**Auto-default pattern**: `express_read` Unix'dagi `yes | command` ga
+o'xshaydi — lekin har prompt'ga mos default bilan. Bu **non-interactive mode**
+pattern — CI/CD tool'larida keng tarqalgan (`apt-get -y`, `npm --yes`).
+
+**Fail-fast in automation**: avtomatik rejimda, hal qilib bo'lmaydigan muammo
+(403, signing yo'q) **darrov to'xtaydi**, interaktiv menyu ko'rsatmaydi.
+Avtomatika "javob kutib qotib qolmaydi" — bu **automation invariant**.
+
 ## [1.15.1] — 2026-06-08
 
 ### Qo'shildi — Auto Deploy'da **platforma checkbox** (Android/iOS tanlash)
@@ -2688,6 +2767,7 @@ yangi yo'lni oladi (3 loyiha → 1 ta fayl tahriri).
 - AAB va APK formatlari, Production va Debug rejimlari.
 - Build natijalarini Finder'da avtomatik ochish.
 
+[1.15.2]: https://github.com/Jaloliddin-Fozilov/flutter-build-tool/releases/tag/v1.15.2
 [1.15.1]: https://github.com/Jaloliddin-Fozilov/flutter-build-tool/releases/tag/v1.15.1
 [1.15.0]: https://github.com/Jaloliddin-Fozilov/flutter-build-tool/releases/tag/v1.15.0
 [1.14.2]: https://github.com/Jaloliddin-Fozilov/flutter-build-tool/releases/tag/v1.14.2
