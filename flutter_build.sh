@@ -22,7 +22,7 @@
 set -eo pipefail
 
 # ─── Skript ma'lumotlari ──────────────────────────────────
-SCRIPT_VERSION="1.15.2"
+SCRIPT_VERSION="1.15.3"
 SCRIPT_REPO="Jaloliddin-Fozilov/flutter-build-tool"
 SCRIPT_RAW_URL="https://raw.githubusercontent.com/${SCRIPT_REPO}/main/flutter_build.sh"
 
@@ -4175,6 +4175,7 @@ play_get_access_token() {
   local response token
 
   response=$(curl -fsS -X POST "https://oauth2.googleapis.com/token" \
+    --connect-timeout 30 --max-time 120 \
     --data-urlencode "grant_type=urn:ietf:params:oauth:grant-type:jwt-bearer" \
     --data-urlencode "assertion=${jwt}" 2>&1) || {
       err "Access token so'rovi xato berdi: $response"
@@ -5482,6 +5483,7 @@ upload_to_play_store() {
   edit_response=$(curl -fsS -X POST "${api_base}/edits" \
     -H "Authorization: Bearer ${token}" \
     -H "Content-Type: application/json" \
+    --connect-timeout 30 --max-time 120 \
     -d '{}' 2>&1) || {
       err "Edit yaratish xato: $edit_response"
       # 403 yoki 404 bo'lsa, eng keng tarqalgan sabablar
@@ -5503,14 +5505,35 @@ upload_to_play_store() {
   ok "Edit yaratildi: $edit_id"
 
   # [3/5] AAB yuklash
-  info "[3/5] AAB yuklanmoqda (${size_mb} MB)..."
-  local upload_response version_code
-  upload_response=$(curl -fsS -X POST \
+  # v1.15.3: 98MB+ fayl uchun PROGRESS BAR — avval 'curl -fsS' sukut bilan
+  # yuklardi (progress yo'q), sekin internetda qotgandek ko'rinardi.
+  # Endi: --progress-bar terminalga, response body faylga, http_code alohida.
+  info "[3/5] AAB yuklanmoqda (${size_mb} MB) — progress pastda ko'rinadi:"
+  info "(katta fayl + sekin internet = bir necha daqiqa, bu normal)"
+  local upload_response version_code upload_body_file upload_http upload_rc
+  upload_body_file=$(mktemp 2>/dev/null || echo "/tmp/fb_play_upload.$$")
+  # --progress-bar -> stderr (terminalda ko'rinadi), body -> -o fayl, kod -> -w stdout
+  # --connect-timeout 30, --max-time 1800 (30 daqiqa) — cheksiz hang oldini oladi
+  upload_http=$(curl -S --progress-bar -X POST \
     "${upload_base}/edits/${edit_id}/bundles?uploadType=media" \
     -H "Authorization: Bearer ${token}" \
     -H "Content-Type: application/octet-stream" \
-    --data-binary "@${aab}" 2>&1) || {
-      err "AAB yuklash xato: $upload_response"
+    --data-binary "@${aab}" \
+    --connect-timeout 30 --max-time 1800 \
+    -o "$upload_body_file" -w '%{http_code}')
+  upload_rc=$?
+  upload_response=$(cat "$upload_body_file" 2>/dev/null)
+  rm -f "$upload_body_file"
+  echo  # progress bar'dan keyin yangi qator
+
+  # Xato: curl muvaffaqiyatsiz (network/timeout) YOKI HTTP >= 400
+  if [ "$upload_rc" -ne 0 ] || { [ -n "$upload_http" ] && [ "$upload_http" -ge 400 ] 2>/dev/null; }; then
+      if [ "$upload_rc" -eq 28 ]; then
+        err "AAB yuklash timeout (30 daqiqa) — internet juda sekin yoki uzildi"
+        info "Qayta urinib ko'ring yoki barqaror internetda sinab ko'ring"
+        return 1
+      fi
+      err "AAB yuklash xato (HTTP ${upload_http:-?}, curl rc=${upload_rc}): $upload_response"
       echo
       # versionCode conflict — eng tez-tez uchraydi
       if echo "$upload_response" | grep -qE 'APK specifies a version code that has already been used|Version code [0-9]+ has already been used'; then
@@ -5523,7 +5546,7 @@ upload_to_play_store() {
         info "Sabab: AAB signed emas yoki noto'g'ri signing"
         try_this "flutter-build   # Production checkbox'ini yoqing va keystore sozlang"
         return 1
-      elif echo "$upload_response" | grep -qE "returned error: 403|HTTP/[12][^ ]* 403|\"code\": *403|forbidden|Forbidden"; then
+      elif [ "$upload_http" = "403" ] || echo "$upload_response" | grep -qE "\"code\": *403|forbidden|Forbidden"; then
         # v1.14.0: bundle upload 403 — eng tez-tez YANGI app uchun
         # Manual upload boshlansa, PLAY_MANUAL_UPLOAD_INITIATED flag o'rnatiladi.
         # Har holda return 1 (API upload tugamadi) — caller else-branch'i flag'ni
@@ -5535,7 +5558,7 @@ upload_to_play_store() {
         echo "$upload_response" | head -5 | sed 's/^/    /'
         return 1
       fi
-    }
+  fi
   version_code=$(extract_json_number "$upload_response" "versionCode")
   if [ -z "$version_code" ]; then
     err "versionCode javobdan topilmadi"
@@ -5572,6 +5595,7 @@ upload_to_play_store() {
     "${api_base}/edits/${edit_id}/tracks/${track}" \
     -H "Authorization: Bearer ${token}" \
     -H "Content-Type: application/json" \
+    --connect-timeout 30 --max-time 120 \
     -d "$track_payload" 2>&1) || {
       err "Track qo'shish xato: $track_response"
       return 1
@@ -5583,6 +5607,7 @@ upload_to_play_store() {
   local commit_response
   commit_response=$(curl -fsS -X POST \
     "${api_base}/edits/${edit_id}:commit" \
+    --connect-timeout 30 --max-time 120 \
     -H "Authorization: Bearer ${token}" 2>&1) || {
       err "Commit xato: $commit_response"
       echo

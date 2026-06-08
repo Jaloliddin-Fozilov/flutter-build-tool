@@ -5,6 +5,74 @@ Loyihaning barcha muhim o'zgarishlari shu faylga yoziladi.
 Format [Keep a Changelog](https://keepachangelog.com/uz/1.1.0/) asosida,
 versiyalash esa [Semantic Versioning](https://semver.org/lang/uz/) qoidasiga rioya qiladi.
 
+## [1.15.3] — 2026-06-08
+
+### Tuzatildi — Play Store upload "qotib qolish" (aslida progress yo'q edi)
+
+User report: "qotib qovoti shunga kelganda" — Play Store upload header
+chiqib, keyin hech narsa ko'rinmasdi (98 MB AAB).
+
+### Sabab — `curl -fsS` sukut bilan yuklaydi (progress bar yo'q)
+
+AAB upload `curl -fsS` bilan edi — `-s` (silent) progress meter'ni
+o'chiradi. **98 MB fayl** sekin internetda bir necha **daqiqa** yuklanadi,
+lekin ekranda **hech qanday belgi yo'q** — to'liq qotgandek ko'rinadi.
+
+Aslida qotmagan — **jim yuklayotgan** edi.
+
+### Fix — progress bar + timeout
+
+```
+[3/5] AAB yuklanmoqda (98 MB) — progress pastda ko'rinadi:
+(katta fayl + sekin internet = bir necha daqiqa, bu normal)
+######################################   67.3%
+```
+
+- **`--progress-bar`** — yuklash jarayoni terminalда ko'rinadi (foiz + bar)
+- **Response body faylga** (`-o`), **http_code alohida** (`-w`) — progress
+  javobni ifloslamaydi
+- **`--connect-timeout 30 --max-time 1800`** — 30 daqiqada tugamasa, aniq
+  timeout xabari (cheksiz hang yo'q)
+
+### Barcha Play API curl'lariga timeout
+
+Cheksiz hang oldini olish uchun barcha so'rovlarga timeout qo'shildi:
+
+| Bosqich | connect-timeout | max-time |
+|---------|-----------------|----------|
+| Access token | 30s | 120s |
+| Edit yaratish | 30s | 120s |
+| **AAB upload** | **30s** | **1800s (30 daqiqa)** |
+| Track qo'shish | 30s | 120s |
+| Commit | 30s | 120s |
+
+### Timeout xabari
+
+Agar internet uzilsa yoki juda sekin bo'lsa:
+
+```
+✗ AAB yuklash timeout (30 daqiqa) — internet juda sekin yoki uzildi
+ℹ Qayta urinib ko'ring yoki barqaror internetda sinab ko'ring
+```
+
+Endi cheksiz kutish o'rniga aniq xabar.
+
+### Texnik tafsilot
+
+**Silent ≠ frozen**: `curl -s` progress meter'ni o'chiradi — bu kichik
+so'rovlar uchun yaxshi (toza output), lekin **katta fayl upload** uchun
+yomon (foydalanuvchi jarayonni ko'rmaydi). Yechim: katta upload uchun
+`--progress-bar`, kichik so'rovlar uchun jim.
+
+**Progress vs response capture**: `--progress-bar` stderr'ga yozadi,
+`-o file` body'ni faylga, `-w '%{http_code}'` kodni stdout'ga. Uchtasi
+alohida oqim — progress javobni ifloslamaydi. Bu **stream separation**
+patterni.
+
+**Timeout as safety net**: `--max-time` cheksiz hang'ning oldini oladi.
+Sekin internet real muammo (Uzbekistan/CIS), lekin **30 daqiqadan ko'p**
+kutish foydasiz — aniq xabar berib to'xtagan ma'qul.
+
 ## [1.15.2] — 2026-06-08
 
 ### Tuzatildi — Auto mode endi **TO'LIQ avtomatik** (hech qanday prompt)
@@ -2767,6 +2835,7 @@ yangi yo'lni oladi (3 loyiha → 1 ta fayl tahriri).
 - AAB va APK formatlari, Production va Debug rejimlari.
 - Build natijalarini Finder'da avtomatik ochish.
 
+[1.15.3]: https://github.com/Jaloliddin-Fozilov/flutter-build-tool/releases/tag/v1.15.3
 [1.15.2]: https://github.com/Jaloliddin-Fozilov/flutter-build-tool/releases/tag/v1.15.2
 [1.15.1]: https://github.com/Jaloliddin-Fozilov/flutter-build-tool/releases/tag/v1.15.1
 [1.15.0]: https://github.com/Jaloliddin-Fozilov/flutter-build-tool/releases/tag/v1.15.0
