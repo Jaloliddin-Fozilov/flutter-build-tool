@@ -5,6 +5,69 @@ Loyihaning barcha muhim o'zgarishlari shu faylga yoziladi.
 Format [Keep a Changelog](https://keepachangelog.com/uz/1.1.0/) asosida,
 versiyalash esa [Semantic Versioning](https://semver.org/lang/uz/) qoidasiga rioya qiladi.
 
+## [1.15.1] — 2026-06-08
+
+### Qo'shildi — Auto Deploy'da **platforma checkbox** (Android/iOS tanlash)
+
+User report: "automode androidga keganda qotib qolyapti" + "automodeda
+tanlasin android yoki iosligini, ya'ni prodni ichiga check box qilib qo'shib
+ber automodeni".
+
+### Sabab
+
+`bajar` loyihasi **ham iOS ham Android** sozlangan edi. Express rejim
+**ikkalasini ham** avtomatik deploy qildi — iOS muvaffaqiyatli, keyin Android'ga
+o'tdi. Foydalanuvchi faqat bittasini xohlagan, lekin tanlash imkoni yo'q edi.
+Android'da (98 MB AAB + ehtimol permission prompt) "qotib qolgandek" ko'rindi.
+
+### Fix — bitta minimal savol: qaysi platforma?
+
+Express rejim endi **sozlangan platformalarni** aniqlaydi va checkbox ko'rsatadi:
+
+```
+⚡ Express (Auto Deploy) — sozlamalar aniqlanmoqda
+
+Sozlangan platformalar:
+  🤖 Android: uz.iportal.bajar (deploy | internal)
+  🍏 iOS: uz.iportal.bajar (jaloliddinish)
+
+Qaysi platformaga deploy? (Space toggle, Enter tasdiqlash)
+  ▶ [✓] 🤖 Android (Play Store)
+    [✓] 🍏 iOS (App Store)
+```
+
+Default: hammasi belgilangan. Space bilan kerakmaganini o'chiring.
+
+### Aqlli xulq
+
+- **Faqat 1 platforma sozlangan** → checkbox ko'rsatilmaydi, to'g'ridan-to'g'ri
+  o'shanisi (ortiqcha savol yo'q)
+- **Ikkala platforma sozlangan** → checkbox bilan tanlaysiz
+- **Hech narsa tanlanmasa** → bekor qilinadi (xato emas)
+
+### "Savolsiz" falsafasi buzilmaydi
+
+Platforma tanlovi — **yagona savol**, chunki u **fundamental** va har deploy'da
+o'zgaradi (ba'zan faqat iOS, ba'zan faqat Android). Qolgan hamma narsa hali ham
+avtomatik: versiya +1, release notes, build, upload, rollout.
+
+### Foydalanuvchi tajriba taqqoslash
+
+| Senariy | v1.15.0 | v1.15.1 |
+|---------|---------|---------|
+| 1 platforma sozlangan | Avto (yaxshi) | Avto (o'zgarmadi) |
+| 2 platforma sozlangan | ❌ Ikkalasi majburiy | ✓ Checkbox bilan tanlash |
+| Faqat iOS kerak | ❌ Android ham majburiy | ✓ Android'ni o'chirish |
+
+### Texnik tafsilot
+
+**Configured vs selected**: avval Express "sozlangan = deploy qilinadi" deb
+hisoblardi. Endi "sozlangan = tanlanishi mumkin" — foydalanuvchi sozlangan
+to'plamdan tanlaydi. Bu **2 bosqichli model** (detection → selection).
+
+**Conditional prompt**: faqat 2+ platforma sozlangan bo'lsa checkbox ko'rsatiladi.
+1 ta bo'lsa — savol bermaymiz (YAGNI: tanlov yo'q joyda savol bermaslik).
+
 ## [1.15.0] — 2026-06-05
 
 ### Qo'shildi — ⚡ **Auto Deploy (Express) rejimi** — savolsiz deploy
@@ -2625,6 +2688,7 @@ yangi yo'lni oladi (3 loyiha → 1 ta fayl tahriri).
 - AAB va APK formatlari, Production va Debug rejimlari.
 - Build natijalarini Finder'da avtomatik ochish.
 
+[1.15.1]: https://github.com/Jaloliddin-Fozilov/flutter-build-tool/releases/tag/v1.15.1
 [1.15.0]: https://github.com/Jaloliddin-Fozilov/flutter-build-tool/releases/tag/v1.15.0
 [1.14.2]: https://github.com/Jaloliddin-Fozilov/flutter-build-tool/releases/tag/v1.14.2
 [1.14.1]: https://github.com/Jaloliddin-Fozilov/flutter-build-tool/releases/tag/v1.14.1

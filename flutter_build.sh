@@ -22,7 +22,7 @@
 set -eo pipefail
 
 # ─── Skript ma'lumotlari ──────────────────────────────────
-SCRIPT_VERSION="1.15.0"
+SCRIPT_VERSION="1.15.1"
 SCRIPT_REPO="Jaloliddin-Fozilov/flutter-build-tool"
 SCRIPT_RAW_URL="https://raw.githubusercontent.com/${SCRIPT_REPO}/main/flutter_build.sh"
 
@@ -6484,7 +6484,7 @@ handle_android_build_failure() {
 #   0 — konfiguratsiya tayyor, deploy qilish mumkin
 #   1 — sozlanmagan yoki bekor (interaktiv rejimga qaytish kerak)
 express_configure() {
-  step "⚡ Express (Auto Deploy) — sozlamalar avtomatik aniqlanmoqda"
+  step "⚡ Express (Auto Deploy) — sozlamalar aniqlanmoqda"
   echo
 
   # Production rejim — deploy uchun har doim
@@ -6499,51 +6499,93 @@ express_configure() {
   DO_PLAYSTORE_UPLOAD=false
   DO_APPSTORE_UPLOAD=false
 
-  # Android konfiguratsiyasini tekshirish
-  local pkg android_account
+  # ── Qaysi platformalar SOZLANGAN ekanini aniqlash (hali tanlamaymiz) ──
+  local android_ok=false ios_ok=false
+  local pkg android_account android_track bundle ios_account
+
   pkg=$(detect_android_package_name 2>/dev/null)
   if [ -n "$pkg" ]; then
     android_account=$(play_project_config_get "$pkg" "account" 2>/dev/null)
     if [ -n "$android_account" ] && play_account_exists "$android_account"; then
-      BUILD_ANDROID=true
-      DO_PLAYSTORE_UPLOAD=true
-      local track
-      track=$(play_project_config_get "$pkg" "track" 2>/dev/null)
-      track="${track:-internal}"
-      ok "Android: ${BOLD}${pkg}${NC}"
-      info "   Akkaunt: ${android_account}  |  Track: ${track}"
-    else
-      info "Android: ${pkg} — Play Store akkaunti sozlanmagan (o'tkazib yuboriladi)"
+      android_ok=true
+      android_track=$(play_project_config_get "$pkg" "track" 2>/dev/null)
+      android_track="${android_track:-internal}"
     fi
   fi
 
-  # iOS konfiguratsiyasini tekshirish (faqat macOS)
   if [ "$(uname)" = "Darwin" ]; then
-    local bundle ios_account
     bundle=$(detect_ios_bundle_id 2>/dev/null)
     if [ -n "$bundle" ]; then
       ios_account=$(appstore_project_config_get "$bundle" "account" 2>/dev/null)
       if [ -n "$ios_account" ] && appstore_account_exists "$ios_account" 2>/dev/null; then
-        BUILD_IOS=true
-        DO_APPSTORE_UPLOAD=true
-        ok "iOS: ${BOLD}${bundle}${NC}"
-        info "   Akkaunt: ${ios_account}"
-      else
-        info "iOS: ${bundle} — App Store akkaunti sozlanmagan (o'tkazib yuboriladi)"
+        ios_ok=true
       fi
     fi
   fi
 
-  echo
   # Hech bo'lmasa bitta platforma sozlangan bo'lishi kerak
-  if ! $BUILD_ANDROID && ! $BUILD_IOS; then
+  if ! $android_ok && ! $ios_ok; then
     warn "Express rejim uchun hech qaysi platforma sozlanmagan"
     info "Avval oddiy build/upload bilan akkaunt va keystore'ni sozlang:"
-    info "  ${BOLD}flutter-build${NC} → 1) Build (to'liq sozlash)"
+    info "  ${BOLD}flutter-build${NC} → 2) Build (to'liq sozlash)"
     info "Sozlangach, Express rejim ishlaydi"
     return 1
   fi
 
+  # ── v1.15.1: Platforma checkbox — faqat sozlangan platformalar ──
+  # Foydalanuvchi qaysi platformaga deploy qilishni tanlaydi (default: hammasi)
+  info "Sozlangan platformalar:"
+  $android_ok && info "  🤖 Android: ${BOLD}${pkg}${NC} (${android_account} | ${android_track})"
+  $ios_ok     && info "  🍏 iOS: ${BOLD}${bundle}${NC} (${ios_account})"
+  echo
+
+  # Checkbox uchun faqat sozlangan platformalarni ko'rsatamiz
+  local cb_labels=() cb_keys=()
+  if $android_ok; then cb_labels+=("🤖 Android (Play Store)"); cb_keys+=("android"); fi
+  if $ios_ok; then cb_labels+=("🍏 iOS (App Store)"); cb_keys+=("ios"); fi
+
+  # Agar faqat 1 ta platforma sozlangan bo'lsa, checkbox shart emas — to'g'ridan-to'g'ri
+  if [ "${#cb_keys[@]}" -eq 1 ]; then
+    case "${cb_keys[0]}" in
+      android) BUILD_ANDROID=true; DO_PLAYSTORE_UPLOAD=true ;;
+      ios)     BUILD_IOS=true; DO_APPSTORE_UPLOAD=true ;;
+    esac
+    ok "Yagona platforma: ${cb_labels[0]}"
+    return 0
+  fi
+
+  # Bir nechta sozlangan — checkbox (default: hammasi belgilangan)
+  CHECKBOX_INITIAL=()
+  local k
+  for k in "${cb_keys[@]}"; do CHECKBOX_INITIAL+=("true"); done
+  arrow_checkbox "Qaysi platformaga deploy? (Space toggle, Enter tasdiqlash)" "${cb_labels[@]}"
+
+  if [ "${CHECKBOX_CANCELLED:-false}" = "true" ]; then
+    warn "Bekor qilindi"
+    return 1
+  fi
+
+  # Tanlovlarni flag'larga aylantirish
+  local idx=0
+  for k in "${cb_keys[@]}"; do
+    if [ "${CHECKBOX_RESULT[$idx]}" = "true" ]; then
+      case "$k" in
+        android) BUILD_ANDROID=true; DO_PLAYSTORE_UPLOAD=true ;;
+        ios)     BUILD_IOS=true; DO_APPSTORE_UPLOAD=true ;;
+      esac
+    fi
+    idx=$((idx + 1))
+  done
+
+  # Hech narsa tanlanmagan bo'lsa
+  if ! $BUILD_ANDROID && ! $BUILD_IOS; then
+    warn "Hech qaysi platforma tanlanmadi — bekor qilindi"
+    return 1
+  fi
+
+  echo
+  $BUILD_ANDROID && ok "Android deploy tanlandi"
+  $BUILD_IOS && ok "iOS deploy tanlandi"
   return 0
 }
 
