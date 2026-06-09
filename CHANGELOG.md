@@ -5,6 +5,84 @@ Loyihaning barcha muhim o'zgarishlari shu faylga yoziladi.
 Format [Keep a Changelog](https://keepachangelog.com/uz/1.1.0/) asosida,
 versiyalash esa [Semantic Versioning](https://semver.org/lang/uz/) qoidasiga rioya qiladi.
 
+## [1.16.0] — 2026-06-08
+
+### Qo'shildi — iOS va Android versiyasini **pubspec.yaml'ga bog'lash**
+
+User savol: "ios va android versiyani pubspeck yaml dan osin yani bir xil
+qilib ber shular bilan bir xil yursin".
+
+### Muammo — hardcoded versiyalar pubspec'dan ajraladi
+
+Ba'zi loyihalarda `build.gradle` va `project.pbxproj` da versiya **qattiq
+yozilgan** (hardcoded):
+```gradle
+versionCode 5          // pubspec'dan ajralgan
+versionName "1.2.0"
+```
+
+Bu pubspec.yaml (`version: 1.0.0+1`) bilan **farq qiladi** — natijada
+iOS/Android/pubspec uch xil versiyada bo'lishi mumkin.
+
+### Fix — Flutter reference'larga aylantirish
+
+Yangi `convert_to_flutter_version_refs` funksiyasi hardcoded'ni Flutter
+reference'ga aylantiradi:
+
+| Fayl | Avval | Keyin |
+|------|-------|-------|
+| `build.gradle` (Groovy) | `versionCode 5` | `versionCode flutter.versionCode` |
+| `build.gradle.kts` (KTS) | `versionCode = 5` | `versionCode = flutter.versionCode` |
+| `project.pbxproj` (iOS) | `CURRENT_PROJECT_VERSION = 5` | `= $(FLUTTER_BUILD_NUMBER)` |
+| `project.pbxproj` (iOS) | `MARKETING_VERSION = 1.2.0` | `= $(FLUTTER_BUILD_NAME)` |
+
+`flutter.versionCode` va `$(FLUTTER_BUILD_NUMBER)` — bular **pubspec.yaml'dan**
+o'qiladi. Demak konvertatsiyadan keyin **uchala versiya doim bir xil yuradi**.
+
+### Build vaqtida avtomatik taklif
+
+Hardcoded versiya aniqlansa, build boshida taklif qilinadi:
+
+```
+⚠ Hardcoded versiya aniqlandi (pubspec'dan ajralgan):
+  • Android: 1.2.0 (5) — build.gradle'da qattiq yozilgan
+  • iOS: 1.2.0 (5) — project.pbxproj'da qattiq yozilgan
+
+Ularni pubspec.yaml'ga bog'lash mumkin — keyin doim bir xil yuradi
+(faqat pubspec'ni o'zgartirasiz, iOS+Android avtomatik oladi)
+
+  Pubspec'ga bog'laymizmi? (y/n) [y]: y
+
+✓ Android: android/app/build.gradle → Flutter reference (pubspec'dan oladi)
+✓ iOS: ios/Runner.xcodeproj/project.pbxproj → Flutter reference (pubspec'dan oladi)
+
+Endi iOS va Android versiyasi pubspec.yaml bilan bir xil yuradi.
+```
+
+### Express rejimda avtomatik
+
+Auto Deploy (`--auto`) rejimida hardcoded aniqlansa, **savolsiz** avtomatik
+bog'lanadi (Express falsafasi).
+
+### Xavfsizlik
+
+- **Backup**: konvertatsiyadan oldin har fayl `*.bak.*` ga saqlanadi
+- **Idempotent**: allaqachon Flutter reference bo'lsa, o'zgartirmaydi
+  (qayta ishlatish xavfsiz)
+- **Faqat hardcoded**: raqamli/versiya qiymatlar almashtiriladi, ref'lar
+  tegilmaydi
+
+### Texnik tafsilot
+
+**Single source of truth (Flutter idiom)**: standart Flutter loyihasi
+versiyani faqat pubspec.yaml'da saqlaydi. `build.gradle` va `project.pbxproj`
+shuni `flutter.versionCode` / `$(FLUTTER_BUILD_NUMBER)` orqali o'qiydi. Bu
+**DRY** — versiya bitta joyda, hamma joyga tarqaladi.
+
+**Single-quote sed for `$(...)`**: iOS uchun `$(FLUTTER_BUILD_NUMBER)` —
+single-quoted sed ishlatildi, aks holda bash uni **command substitution**
+deb talqin qilardi. Bu shell quoting'ning nozik joyi.
+
 ## [1.15.3] — 2026-06-08
 
 ### Tuzatildi — Play Store upload "qotib qolish" (aslida progress yo'q edi)
@@ -2835,6 +2913,7 @@ yangi yo'lni oladi (3 loyiha → 1 ta fayl tahriri).
 - AAB va APK formatlari, Production va Debug rejimlari.
 - Build natijalarini Finder'da avtomatik ochish.
 
+[1.16.0]: https://github.com/Jaloliddin-Fozilov/flutter-build-tool/releases/tag/v1.16.0
 [1.15.3]: https://github.com/Jaloliddin-Fozilov/flutter-build-tool/releases/tag/v1.15.3
 [1.15.2]: https://github.com/Jaloliddin-Fozilov/flutter-build-tool/releases/tag/v1.15.2
 [1.15.1]: https://github.com/Jaloliddin-Fozilov/flutter-build-tool/releases/tag/v1.15.1

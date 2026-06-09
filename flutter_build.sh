@@ -22,7 +22,7 @@
 set -eo pipefail
 
 # ─── Skript ma'lumotlari ──────────────────────────────────
-SCRIPT_VERSION="1.15.3"
+SCRIPT_VERSION="1.16.0"
 SCRIPT_REPO="Jaloliddin-Fozilov/flutter-build-tool"
 SCRIPT_RAW_URL="https://raw.githubusercontent.com/${SCRIPT_REPO}/main/flutter_build.sh"
 
@@ -1997,6 +1997,57 @@ update_android_version() {
     sed -i.bak -E "s/versionName[[:space:]]+\"[^\"]*\"/versionName \"${v}\"/" "$file"
   fi
   rm -f "$file.bak"
+}
+
+# v1.16.0: Hardcoded versiyalarni Flutter reference'larga aylantirish.
+# Shunda iOS/Android versiyasi DOIM pubspec.yaml'dan olinadi (bir xil yuradi).
+#   Android (Groovy): versionCode 5      → versionCode flutter.versionCode
+#   Android (KTS):     versionCode = 5    → versionCode = flutter.versionCode
+#   iOS (pbxproj):     CURRENT_PROJECT_VERSION = 5 → ... = $(FLUTTER_BUILD_NUMBER)
+#
+# Args: android_gradle_file ios_pbxproj_file
+# Returns: 0 (har doim — har platforma alohida ishlanadi)
+convert_to_flutter_version_refs() {
+  local android_file="$1" ios_file="$2"
+  local changed=false
+
+  # ── Android ──
+  if [ -n "$android_file" ] && [ -f "$android_file" ]; then
+    cp "$android_file" "${android_file}.bak.$(date +%s)"
+    if [[ "$android_file" == *.kts ]]; then
+      # KTS: versionCode = N → versionCode = flutter.versionCode
+      sed -i.tmp -E 's/versionCode[[:space:]]*=[[:space:]]*[0-9]+/versionCode = flutter.versionCode/' "$android_file"
+      sed -i.tmp -E 's/versionName[[:space:]]*=[[:space:]]*"[^"]*"/versionName = flutter.versionName/' "$android_file"
+    else
+      # Groovy: versionCode N → versionCode flutter.versionCode
+      sed -i.tmp -E 's/versionCode[[:space:]]+[0-9]+/versionCode flutter.versionCode/' "$android_file"
+      sed -i.tmp -E 's/versionName[[:space:]]+"[^"]*"/versionName flutter.versionName/' "$android_file"
+    fi
+    rm -f "${android_file}.tmp"
+    ok "Android: ${android_file} → Flutter reference (pubspec'dan oladi)"
+    changed=true
+  fi
+
+  # ── iOS ──
+  # pbxproj'da $(FLUTTER_BUILD_NUMBER) / $(FLUTTER_BUILD_NAME) — Xcode o'zgaruvchilari
+  # MUHIM: single-quote sed — $(...) literal qoladi (bash command substitution emas)
+  if [ -n "$ios_file" ] && [ -f "$ios_file" ]; then
+    cp "$ios_file" "${ios_file}.bak.$(date +%s)"
+    # Faqat hardcoded (raqam/versiya) qiymatlarni almashtiramiz; allaqachon ref bo'lsa skip
+    sed -i.tmp -E 's/CURRENT_PROJECT_VERSION = [0-9][^;]*;/CURRENT_PROJECT_VERSION = $(FLUTTER_BUILD_NUMBER);/g' "$ios_file"
+    sed -i.tmp -E 's/MARKETING_VERSION = [0-9][^;]*;/MARKETING_VERSION = $(FLUTTER_BUILD_NAME);/g' "$ios_file"
+    rm -f "${ios_file}.tmp"
+    ok "iOS: ${ios_file} → Flutter reference (pubspec'dan oladi)"
+    changed=true
+  fi
+
+  if $changed; then
+    echo
+    info "${BOLD}Endi iOS va Android versiyasi pubspec.yaml bilan bir xil yuradi.${NC}"
+    info "Versiyani o'zgartirish uchun faqat pubspec.yaml'ni yangilang (yoki '+' bosing)."
+    info "Backup'lar saqlandi (*.bak.*)"
+  fi
+  return 0
 }
 
 # ─── Android signing yordamchi funksiyalari ───────────────
@@ -6762,6 +6813,41 @@ printf  "  ${BOLD}│${NC}  ${CYAN}%-22s${NC} ${YELLOW}%s${NC}\n" "iOS build num
 printf  "  ${BOLD}│${NC}  ${CYAN}%-22s${NC} ${YELLOW}%s${NC}\n" "Android versionName" "${ANDROID_VERSION}"
 printf  "  ${BOLD}│${NC}  ${CYAN}%-22s${NC} ${YELLOW}%s${NC}\n" "Android versionCode" "${ANDROID_BUILD}"
 echo -e "  ${BOLD}╰──────────────────────────────────────────────────╯${NC}"
+
+# v1.16.0: hardcoded versiya aniqlansa, pubspec'ga bog'lashni taklif qilamiz
+# (foydalanuvchi: "ios va android versiyani pubspec'dan olsin, bir xil yursin")
+if ! $IOS_USES_FLUTTER_REF || ! $ANDROID_USES_FLUTTER_REF; then
+  echo
+  warn "Hardcoded versiya aniqlandi (pubspec'dan ajralgan):"
+  ! $ANDROID_USES_FLUTTER_REF && info "  • Android: ${ANDROID_VERSION} (${ANDROID_BUILD}) — build.gradle'da qattiq yozilgan"
+  ! $IOS_USES_FLUTTER_REF && info "  • iOS: ${IOS_VERSION} (${IOS_BUILD}) — project.pbxproj'da qattiq yozilgan"
+  echo
+  info "Ularni ${BOLD}pubspec.yaml'ga bog'lash${NC} mumkin — keyin doim bir xil yuradi"
+  info "(faqat pubspec'ni o'zgartirasiz, iOS+Android avtomatik oladi)"
+  echo
+  if [ "${EXPRESS_MODE:-false}" = "true" ]; then
+    # Express: avtomatik bog'laymiz (savolsiz)
+    info "⚡ Express: avtomatik pubspec'ga bog'lanmoqda..."
+    convert_to_flutter_version_refs "$ANDROID_GRADLE" "$IOS_PROJECT"
+    # Endi ikkalasi ham Flutter ref — qayta aniqlaymiz
+    IOS_USES_FLUTTER_REF=true
+    ANDROID_USES_FLUTTER_REF=true
+    IOS_VERSION="$PUBSPEC_NAME"; IOS_BUILD="$PUBSPEC_BUILD"
+    ANDROID_VERSION="$PUBSPEC_NAME"; ANDROID_BUILD="$PUBSPEC_BUILD"
+  else
+    local conv_choice
+    read -p "  Pubspec'ga bog'laymizmi? (y/n) [y]: " conv_choice
+    if [[ ! "$conv_choice" =~ ^[Nn]$ ]]; then
+      convert_to_flutter_version_refs "$ANDROID_GRADLE" "$IOS_PROJECT"
+      IOS_USES_FLUTTER_REF=true
+      ANDROID_USES_FLUTTER_REF=true
+      IOS_VERSION="$PUBSPEC_NAME"; IOS_BUILD="$PUBSPEC_BUILD"
+      ANDROID_VERSION="$PUBSPEC_NAME"; ANDROID_BUILD="$PUBSPEC_BUILD"
+    else
+      info "Bog'lanmadi — hardcoded versiyalar saqlanadi"
+    fi
+  fi
+fi
 
 # ─── 2. Build Wizard (v1.11.0: bosqichma-bosqich) ──────────
 # 5 ta bosqich, har biri kichik va aniq:
