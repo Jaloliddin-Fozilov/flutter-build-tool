@@ -5,6 +5,75 @@ Loyihaning barcha muhim o'zgarishlari shu faylga yoziladi.
 Format [Keep a Changelog](https://keepachangelog.com/uz/1.1.0/) asosida,
 versiyalash esa [Semantic Versioning](https://semver.org/lang/uz/) qoidasiga rioya qiladi.
 
+## [1.16.1] — 2026-06-08
+
+### Tuzatildi — Android upload "oxirigacha qotib qolish" (server processing)
+
+User report: "androidda ohirgcha deploy bo'lmayapti qotib qolyapti auto
+uploadda testladim".
+
+### Sabab — progress 100% bo'lgach Google JIM qayta ishlaydi
+
+v1.15.3 progress bar qo'shdi, lekin u faqat **upload foizini** ko'rsatadi.
+Progress 100% bo'lgach, **Google AAB'ni qayta ishlaydi** (98 MB validatsiya,
+versionCode generatsiya = 1-3 daqiqa). Bu paytda curl **javob kutib jim
+turadi** — progress bar 100%'da qotib, hech narsa o'zgarmaydi.
+
+Foydalanuvchi "oxirigacha yetib, qotib qoldi" deb ko'radi — aslida Google
+qayta ishlayotgan edi.
+
+### Fix — uzluksiz elapsed-time spinner
+
+`--progress-bar` o'rniga **background curl + sekund hisoblagich**:
+
+```
+[3/5] AAB yuklanmoqda (98 MB)...
+(yuklash + Google qayta ishlash: sekin internetda 2-5 daqiqa — bu NORMAL)
+  ⏳ Yuklanmoqda va qayta ishlanmoqda...  47s  (Ctrl+C bekor)
+```
+
+Hisoblagich **butun jarayon davomida** (upload + server processing) har
+sekund yangilanadi. Endi 100%'dan keyin ham faollik ko'rinadi — hech qachon
+qotgandek tuyulmaydi.
+
+```
+Yuklash yakunlandi (73s)
+✓ AAB yuklandi, versionCode=31
+```
+
+### Texnik mexanizm
+
+```bash
+curl -sS ... -o body_file -w '%{http_code}' > code_file 2>/dev/null &
+curl_pid=$!
+while kill -0 "$curl_pid" 2>/dev/null; do
+  printf '\r  ⏳ Yuklanmoqda... %3ds' "$secs"
+  sleep 1; secs=$((secs + 1))
+done
+wait "$curl_pid"; upload_rc=$?
+```
+
+- **Background curl** (`&`) — body va http_code fayllarga
+- **`kill -0` polling** — curl tirikligini tekshiradi
+- **`\r` spinner** — bir qatorda yangilanadi
+- **`wait`** — curl exit code'ini oladi
+
+### max-time 1800 → 900
+
+Upload timeout 30 daqiqadan **15 daqiqaga** kamaytirildi — sekin internetda
+ham 98 MB 15 daqiqada yetadi, ortig'i foydasiz kutish.
+
+### Texnik tafsilot
+
+**Progress % ≠ butun jarayon**: `--progress-bar` faqat **transfer**'ni
+ko'rsatadi (bytes uzatish). Lekin HTTP so'rovda transfer'dan keyin **server
+processing** bor — javob kutish. Katta upload'da bu sezilarli. Spinner
+ikkala fazani ham qamraydi (curl tugaguncha sanaydi).
+
+**Liveness indicator**: elapsed-time counter — eng oddiy "men tirikman"
+signali. Progress % yo'q, lekin **uzluksiz harakat** bor. "Qotdimi yoki
+ishlayaptimi?" savoliga aniq javob.
+
 ## [1.16.0] — 2026-06-08
 
 ### Qo'shildi — iOS va Android versiyasini **pubspec.yaml'ga bog'lash**
@@ -2913,6 +2982,7 @@ yangi yo'lni oladi (3 loyiha → 1 ta fayl tahriri).
 - AAB va APK formatlari, Production va Debug rejimlari.
 - Build natijalarini Finder'da avtomatik ochish.
 
+[1.16.1]: https://github.com/Jaloliddin-Fozilov/flutter-build-tool/releases/tag/v1.16.1
 [1.16.0]: https://github.com/Jaloliddin-Fozilov/flutter-build-tool/releases/tag/v1.16.0
 [1.15.3]: https://github.com/Jaloliddin-Fozilov/flutter-build-tool/releases/tag/v1.15.3
 [1.15.2]: https://github.com/Jaloliddin-Fozilov/flutter-build-tool/releases/tag/v1.15.2

@@ -22,7 +22,7 @@
 set -eo pipefail
 
 # ─── Skript ma'lumotlari ──────────────────────────────────
-SCRIPT_VERSION="1.16.0"
+SCRIPT_VERSION="1.16.1"
 SCRIPT_REPO="Jaloliddin-Fozilov/flutter-build-tool"
 SCRIPT_RAW_URL="https://raw.githubusercontent.com/${SCRIPT_REPO}/main/flutter_build.sh"
 
@@ -5556,32 +5556,45 @@ upload_to_play_store() {
   ok "Edit yaratildi: $edit_id"
 
   # [3/5] AAB yuklash
-  # v1.15.3: 98MB+ fayl uchun PROGRESS BAR — avval 'curl -fsS' sukut bilan
-  # yuklardi (progress yo'q), sekin internetda qotgandek ko'rinardi.
-  # Endi: --progress-bar terminalga, response body faylga, http_code alohida.
-  info "[3/5] AAB yuklanmoqda (${size_mb} MB) — progress pastda ko'rinadi:"
-  info "(katta fayl + sekin internet = bir necha daqiqa, bu normal)"
-  local upload_response version_code upload_body_file upload_http upload_rc
-  upload_body_file=$(mktemp 2>/dev/null || echo "/tmp/fb_play_upload.$$")
-  # --progress-bar -> stderr (terminalda ko'rinadi), body -> -o fayl, kod -> -w stdout
-  # --connect-timeout 30, --max-time 1800 (30 daqiqa) — cheksiz hang oldini oladi
-  upload_http=$(curl -S --progress-bar -X POST \
+  # v1.15.3: progress bar — lekin 100% bo'lgach Google AAB'ni qayta ishlaydi
+  #   (98MB validatsiya 1-3 daqiqa) va curl JIM kutadi → qotgandek ko'rinardi.
+  # v1.15.4: background curl + UZLUKSIZ elapsed-time spinner. Butun jarayon
+  #   davomida (upload + server processing) sekund hisoblagich ko'rinadi —
+  #   hech qachon qotgandek tuyulmaydi.
+  info "[3/5] AAB yuklanmoqda (${size_mb} MB)..."
+  info "(yuklash + Google qayta ishlash: sekin internetda 2-5 daqiqa — bu NORMAL)"
+  local upload_response version_code upload_body_file upload_code_file upload_http upload_rc
+  upload_body_file=$(mktemp 2>/dev/null || echo "/tmp/fb_play_body.$$")
+  upload_code_file=$(mktemp 2>/dev/null || echo "/tmp/fb_play_code.$$")
+
+  # curl'ni FONDA ishga tushiramiz; http_code -> code_file, body -> body_file
+  # -s (silent): o'z spinnerimiz bor. --max-time 900 (15 daqiqa) cheksiz hang yo'q.
+  curl -sS -X POST \
     "${upload_base}/edits/${edit_id}/bundles?uploadType=media" \
     -H "Authorization: Bearer ${token}" \
     -H "Content-Type: application/octet-stream" \
     --data-binary "@${aab}" \
-    --connect-timeout 30 --max-time 1800 \
-    -o "$upload_body_file" -w '%{http_code}')
-  upload_rc=$?
+    --connect-timeout 30 --max-time 900 \
+    -o "$upload_body_file" -w '%{http_code}' > "$upload_code_file" 2>/dev/null &
+  local curl_pid=$! secs=0
+  # Uzluksiz spinner: curl tugaguncha sekund sanaydi (faollik ko'rsatadi)
+  while kill -0 "$curl_pid" 2>/dev/null; do
+    printf '\r  ⏳ Yuklanmoqda va qayta ishlanmoqda... %3ds  (Ctrl+C bekor)' "$secs"
+    sleep 1
+    secs=$((secs + 1))
+  done
+  wait "$curl_pid"; upload_rc=$?
+  printf '\r%*s\r' 64 ''  # spinner qatorini tozalash
+  upload_http=$(cat "$upload_code_file" 2>/dev/null)
   upload_response=$(cat "$upload_body_file" 2>/dev/null)
-  rm -f "$upload_body_file"
-  echo  # progress bar'dan keyin yangi qator
+  rm -f "$upload_body_file" "$upload_code_file"
+  info "Yuklash yakunlandi (${secs}s)"
 
   # Xato: curl muvaffaqiyatsiz (network/timeout) YOKI HTTP >= 400
   if [ "$upload_rc" -ne 0 ] || { [ -n "$upload_http" ] && [ "$upload_http" -ge 400 ] 2>/dev/null; }; then
       if [ "$upload_rc" -eq 28 ]; then
-        err "AAB yuklash timeout (30 daqiqa) — internet juda sekin yoki uzildi"
-        info "Qayta urinib ko'ring yoki barqaror internetda sinab ko'ring"
+        err "AAB yuklash timeout (15 daqiqa) — internet juda sekin yoki uzildi"
+        info "Qayta urinib ko'ring yoki barqaror internetda (Wi-Fi) sinab ko'ring"
         return 1
       fi
       err "AAB yuklash xato (HTTP ${upload_http:-?}, curl rc=${upload_rc}): $upload_response"
