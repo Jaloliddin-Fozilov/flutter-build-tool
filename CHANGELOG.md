@@ -5,6 +5,65 @@ Loyihaning barcha muhim o'zgarishlari shu faylga yoziladi.
 Format [Keep a Changelog](https://keepachangelog.com/uz/1.1.0/) asosida,
 versiyalash esa [Semantic Versioning](https://semver.org/lang/uz/) qoidasiga rioya qiladi.
 
+## [1.16.3] — 2026-06-08
+
+### Qo'shildi — Google API connectivity pre-check (tez fail, hang emas)
+
+User report: Android upload "Release notes:" da to'xtab qolyapti, `[1/5]`
+umuman ko'rinmaydi. Bir necha marta aynan shu joyda.
+
+### Tahlil
+
+`[1/5]` dan oldin hech narsa qotmasligi kerak edi. Sabab — `[1/5]` token
+so'rovi **oauth2.googleapis.com**'ga ulanmoqchi bo'lganda tarmoq sekin/bloklangan
+bo'lsa, uzoq kutadi. Ba'zi tarmoqlarda (jumladan CIS/Uzbekistan) Google API'lar
+sekin yoki vaqtincha bloklangan bo'lishi mumkin.
+
+### Fix — connectivity pre-check
+
+Upload boshida (token'dan oldin) tez ulanish tekshiruvi:
+
+```
+Google API ulanishi tekshirilmoqda...
+✓ Google API ulanishi bor (HTTP 404)
+[1/5] Access token olinmoqda...
+```
+
+Agar 15 soniyada ulanmasa — uzoq hang o'rniga **darrov aniq xabar**:
+
+```
+✗ Google API'ga ulanib bo'lmadi (oauth2.googleapis.com)
+
+Sabab — internet sekin, uzilgan, yoki Google bloklangan:
+  • Boshqa tarmoqda urinib ko'ring (Wi-Fi ↔ mobil)
+  • VPN yoqilgan bo'lsa, o'chirib ko'ring (yoki yoqing)
+  • Internet barqarorligini tekshiring
+
+→ curl -v --connect-timeout 10 https://oauth2.googleapis.com/
+→ ping -c 3 google.com
+```
+
+### MUHIM — eski versiyada bu yo'q
+
+Agar siz spinner'ni va connectivity check'ni **ko'rmayotgan** bo'lsangiz,
+eski versiyadasiz. Auto-update versiya tekshiruvi **5 soniya** timeout bilan —
+sekin internetda u ham timeout bo'lib, yangilanish taklif qilinmasligi mumkin.
+
+**Qo'lda yangilash:**
+```bash
+curl -fsSL https://raw.githubusercontent.com/Jaloliddin-Fozilov/flutter-build-tool/main/flutter_build.sh -o "$(which flutter-build)"
+```
+
+### Texnik tafsilot
+
+**Fail-fast connectivity probe**: tarmoq operatsiyasidan oldin tez "reachable?"
+tekshiruvi — bu **circuit breaker** patternining oddiy varianti. Bloklangan
+xizmatga uzoq urinish o'rniga, darrov aniqlab, foydalanuvchiga aytadi.
+
+**HTTP 404 = reachable**: `GET oauth2.googleapis.com/` 404 qaytaradi (endpoint
+yo'q), lekin bu **ulanish bor** degani. Connectivity uchun har qanday HTTP
+javob (hatto 404) — muvaffaqiyat. Faqat `000` (yoki bo'sh) = ulanmadi.
+
 ## [1.16.2] — 2026-06-08
 
 ### Tuzatildi — BARCHA Play upload bosqichlariga spinner (har qadam ko'rinadi)
@@ -3046,6 +3105,7 @@ yangi yo'lni oladi (3 loyiha → 1 ta fayl tahriri).
 - AAB va APK formatlari, Production va Debug rejimlari.
 - Build natijalarini Finder'da avtomatik ochish.
 
+[1.16.3]: https://github.com/Jaloliddin-Fozilov/flutter-build-tool/releases/tag/v1.16.3
 [1.16.2]: https://github.com/Jaloliddin-Fozilov/flutter-build-tool/releases/tag/v1.16.2
 [1.16.1]: https://github.com/Jaloliddin-Fozilov/flutter-build-tool/releases/tag/v1.16.1
 [1.16.0]: https://github.com/Jaloliddin-Fozilov/flutter-build-tool/releases/tag/v1.16.0

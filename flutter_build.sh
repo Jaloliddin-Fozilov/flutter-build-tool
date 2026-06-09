@@ -22,7 +22,7 @@
 set -eo pipefail
 
 # ─── Skript ma'lumotlari ──────────────────────────────────
-SCRIPT_VERSION="1.16.2"
+SCRIPT_VERSION="1.16.3"
 SCRIPT_REPO="Jaloliddin-Fozilov/flutter-build-tool"
 SCRIPT_RAW_URL="https://raw.githubusercontent.com/${SCRIPT_REPO}/main/flutter_build.sh"
 
@@ -5552,6 +5552,28 @@ upload_to_play_store() {
 
   local api_base="https://androidpublisher.googleapis.com/androidpublisher/v3/applications/${package_name}"
   local upload_base="https://androidpublisher.googleapis.com/upload/androidpublisher/v3/applications/${package_name}"
+
+  # v1.16.3: tez connectivity pre-check — Google API'ga ulanib bo'lmasa, uzoq
+  # hang o'rniga DARROV aniq xabar. (Ba'zi tarmoqlarda Google bloklangan/sekin.)
+  info "Google API ulanishi tekshirilmoqda..."
+  local conn_code
+  conn_code=$(curl -sS -o /dev/null -w '%{http_code}' \
+    --connect-timeout 10 --max-time 15 \
+    "https://oauth2.googleapis.com/" 2>/dev/null)
+  if [ -z "$conn_code" ] || [ "$conn_code" = "000" ]; then
+    err "Google API'ga ulanib bo'lmadi (oauth2.googleapis.com)"
+    echo
+    info "Sabab — internet sekin, uzilgan, yoki Google bloklangan:"
+    info "  • Boshqa tarmoqda urinib ko'ring (Wi-Fi ↔ mobil)"
+    info "  • VPN yoqilgan bo'lsa, o'chirib ko'ring (yoki yoqing)"
+    info "  • Internet barqarorligini tekshiring"
+    echo
+    try_this \
+      "curl -v --connect-timeout 10 https://oauth2.googleapis.com/   # ulanishni tekshirish" \
+      "ping -c 3 google.com   # umumiy internet tekshiruvi"
+    return 1
+  fi
+  ok "Google API ulanishi bor (HTTP ${conn_code})"
 
   # [1/5] Access token
   info "[1/5] Access token olinmoqda..."
