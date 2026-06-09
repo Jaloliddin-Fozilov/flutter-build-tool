@@ -5,6 +5,54 @@ Loyihaning barcha muhim o'zgarishlari shu faylga yoziladi.
 Format [Keep a Changelog](https://keepachangelog.com/uz/1.1.0/) asosida,
 versiyalash esa [Semantic Versioning](https://semver.org/lang/uz/) qoidasiga rioya qiladi.
 
+## [1.17.3] — 2026-06-09
+
+### Qo'shildi — persistent heartbeat (`\r` spinner paste'da yo'qolardi)
+
+User v1.17.2 da ham upload "Release notes:" da to'xtagandek ko'rdi. Lekin
+store fetch ISHLADI ("Store'dagi oxirgi: 25 → +1 → 26") — Google ulanadi.
+
+### Sabab — `\r` spinner nusxa olganda ko'chmaydi
+
+Spinner `\r` (carriage return) bilan **bir qatorni qayta-qayta yozadi**.
+Terminal'da ko'rinadi, lekin **paste/log'ga ko'chmaydi** (transient). Shuning
+uchun foydalanuvchi spinner'ni ko'rmay, "qotdi" deb o'ylaydi. Aslida upload
+ishlayotgan bo'lishi mumkin.
+
+### Fix — har 15 soniyada DOIMIY qator (heartbeat)
+
+`\r` spinnerga qo'shimcha, har 15s da **newline bilan doimiy qator**:
+
+```
+  ⏳ Yuklanmoqda va qayta ishlanmoqda... 12s
+  ⏳ Hali yuklanmoqda (15s, 98 MB sekin internetda normal)...
+  ⏳ Yuklanmoqda va qayta ishlanmoqda... 27s
+  ⏳ Hali yuklanmoqda (30s, 98 MB sekin internetda normal)...
+  ⏳ Hali yuklanmoqda (45s, ...)...
+```
+
+Bu qatorlar **paste/log'da qoladi** — endi aniq ko'rinadi: ishlayaptimi
+(soni oshyapti) yoki haqiqatan qotganmi (bir joyda turibdi).
+
+### Barcha bosqichlarda
+
+`_curl_spin` (token, edit, track, commit, connectivity) va [3/5] upload —
+hammasida 15s heartbeat.
+
+### Sizning holatingiz — ehtimol shunchaki sekin upload
+
+Store fetch ishlagani (25→26) Google ulanishini isbotlaydi. 98 MB AAB
+sekin internet/VPN'da 5-10 daqiqa yuklanadi. Endi heartbeat har 15s da
+"hali yuklanmoqda" deb ko'rsatadi — qotmaganini bilasiz.
+
+### Texnik tafsilot
+
+**`\r` vs `\n` in terminal capture**: `\r` (carriage return) kursorni qator
+boshiga qaytaradi, eski matnni qoplaydi. Bu real-time UI uchun zo'r, lekin
+**terminal scrollback/copy** faqat `\n` (newline) bilan tugagan qatorlarni
+saqlaydi. Shuning uchun progress'ni HAM `\r` (jonli), HAM `\n` (doimiy)
+bilan ko'rsatish kerak — birinchisi tezkorlik, ikkinchisi tarix uchun.
+
 ## [1.17.2] — 2026-06-09
 
 ### Tuzatildi — `Store'dagi oxirgi: (bo'sh)` (subshell global trap)
@@ -3354,6 +3402,7 @@ yangi yo'lni oladi (3 loyiha → 1 ta fayl tahriri).
 - AAB va APK formatlari, Production va Debug rejimlari.
 - Build natijalarini Finder'da avtomatik ochish.
 
+[1.17.3]: https://github.com/Jaloliddin-Fozilov/flutter-build-tool/releases/tag/v1.17.3
 [1.17.2]: https://github.com/Jaloliddin-Fozilov/flutter-build-tool/releases/tag/v1.17.2
 [1.17.1]: https://github.com/Jaloliddin-Fozilov/flutter-build-tool/releases/tag/v1.17.1
 [1.17.0]: https://github.com/Jaloliddin-Fozilov/flutter-build-tool/releases/tag/v1.17.0

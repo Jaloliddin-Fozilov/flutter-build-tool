@@ -22,7 +22,7 @@
 set -eo pipefail
 
 # ─── Skript ma'lumotlari ──────────────────────────────────
-SCRIPT_VERSION="1.17.2"
+SCRIPT_VERSION="1.17.3"
 SCRIPT_REPO="Jaloliddin-Fozilov/flutter-build-tool"
 SCRIPT_RAW_URL="https://raw.githubusercontent.com/${SCRIPT_REPO}/main/flutter_build.sh"
 
@@ -5564,14 +5564,19 @@ _curl_spin() {
   local pid=$! s=0
   # MUHIM: spinner STDERR'ga yoziladi — shunda command-substitution ($(...))
   # ichida chaqirilsa ham, funksiyaning stdout return qiymatini ifloslamaydi.
+  # v1.17.3: har 15s da DOIMIY qator (heartbeat) — \r paste'da yo'qoladi,
+  # lekin newline qoladi. Shunda log/paste'da ham progress ko'rinadi.
   while kill -0 "$pid" 2>/dev/null; do
-    printf '\r  ⏳ %s... %ds' "$label" "$s" >&2
+    printf '\r  ⏳ %s... %ds   ' "$label" "$s" >&2
+    if [ "$s" -gt 0 ] && [ $((s % 15)) -eq 0 ]; then
+      printf '\n  ⏳ %s — hali ishlayapti (%ds)...\n' "$label" "$s" >&2
+    fi
     sleep 1
     s=$((s + 1))
   done
   wait "$pid"; SPIN_RC=$?
   # Spinner qatorini tozalash (faqat ko'rsatilgan bo'lsa)
-  [ "$s" -gt 0 ] && printf '\r%*s\r' 56 '' >&2
+  [ "$s" -gt 0 ] && printf '\r%*s\r' 60 '' >&2
   SPIN_HTTP=$(cat "$code_f" 2>/dev/null)
   rm -f "$code_f"
 }
@@ -5744,8 +5749,13 @@ upload_to_play_store() {
     -o "$upload_body_file" -w '%{http_code}' > "$upload_code_file" 2>/dev/null &
   local curl_pid=$! secs=0
   # Uzluksiz spinner: curl tugaguncha sekund sanaydi (faollik ko'rsatadi)
+  # v1.17.3: har 15s da DOIMIY qator (heartbeat) — \r paste'da yo'qoladi,
+  # lekin newline qoladi. 98 MB upload uchun aniq progress.
   while kill -0 "$curl_pid" 2>/dev/null; do
-    printf '\r  ⏳ Yuklanmoqda va qayta ishlanmoqda... %3ds  (Ctrl+C bekor)' "$secs"
+    printf '\r  ⏳ Yuklanmoqda va qayta ishlanmoqda... %3ds  (Ctrl+C bekor)   ' "$secs"
+    if [ "$secs" -gt 0 ] && [ $((secs % 15)) -eq 0 ]; then
+      printf '\n  ⏳ Hali yuklanmoqda (%ds, 98 MB sekin internetda normal)...\n' "$secs"
+    fi
     sleep 1
     secs=$((secs + 1))
   done
