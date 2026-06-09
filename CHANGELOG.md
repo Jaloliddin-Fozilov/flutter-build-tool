@@ -5,6 +5,70 @@ Loyihaning barcha muhim o'zgarishlari shu faylga yoziladi.
 Format [Keep a Changelog](https://keepachangelog.com/uz/1.1.0/) asosida,
 versiyalash esa [Semantic Versioning](https://semver.org/lang/uz/) qoidasiga rioya qiladi.
 
+## [1.16.2] — 2026-06-08
+
+### Tuzatildi — BARCHA Play upload bosqichlariga spinner (har qadam ko'rinadi)
+
+User report: Android upload hali ham "qotib qolyapti" — paste "Play Store ga
+yuklash" header'ida (▶ [1/5] dan oldin) to'xtagan.
+
+### Sabab
+
+v1.16.1 faqat **[3/5] AAB upload**'ga spinner qo'shgan edi. Lekin boshqa
+network bosqichlari ([1/5] token, [2/5] edit, [4/5] track, [5/5] commit)
+hali ham **jim** edi. Sekin internetda ulardan birortasi sekinlashsa,
+foydalanuvchi qaysi qadamda ekanini va tirik ekanini bilmasdi.
+
+### Fix — universal `_curl_spin` helper
+
+Yangi `_curl_spin` — har bir Play API so'rovini elapsed-time spinner bilan
+o'raydi:
+
+```
+  ⏳ Access token... 2s
+  ⏳ Edit yaratish... 1s
+  ⏳ AAB upload... 47s        (98 MB)
+  ⏳ Track qo'shish (internal)... 3s
+  ⏳ Commit... 8s
+```
+
+Endi **har bir bosqich** sekund hisoblagich ko'rsatadi. Qaysi qadamda
+ekaningiz va skript tirikligini doim ko'rasiz.
+
+### Spinner stderr'ga yoziladi
+
+`_curl_spin` spinner'ni **stderr**'ga yozadi — shuning uchun token kabi
+qiymatlarni qaytaradigan funksiyalarda ham ishlatish mumkin (stdout return
+qiymatini ifloslamaydi). Bu **stream discipline** — UI stderr'da, ma'lumot
+stdout'da.
+
+### Har bosqichda timeout + HTTP code diagnostika
+
+`_curl_spin` `SPIN_RC` (curl exit) va `SPIN_HTTP` (HTTP status) ni o'rnatadi.
+Har bosqich:
+- Timeout (rc 28) → aniq "timeout" xabari
+- HTTP ≥ 400 → status kodi bilan xato
+
+### Barcha 5 bosqich qamrab olindi
+
+| Bosqich | Avval | v1.16.2 |
+|---------|-------|---------|
+| [1/5] Token | jim | ⏳ spinner |
+| [2/5] Edit | jim | ⏳ spinner |
+| [3/5] Upload | spinner (v1.16.1) | ⏳ spinner |
+| [4/5] Track | jim | ⏳ spinner |
+| [5/5] Commit | jim | ⏳ spinner |
+
+### Texnik tafsilot
+
+**Stream discipline (stdout vs stderr)**: spinner — bu **UI** (foydalanuvchi
+uchun), funksiya return qiymati — bu **ma'lumot** (dastur uchun). Ularni
+ajratish kerak: UI → stderr, ma'lumot → stdout. Shunda `token=$(get_token)`
+da spinner token'ni ifloslamaydi. Bu Unix filtr falsafasi.
+
+**HTTP code + body separation**: `curl -o body_file -w '%{http_code}'` —
+body faylga, status kod stdout'ga. Ikkalasi alohida, aralashmaydi.
+
 ## [1.16.1] — 2026-06-08
 
 ### Tuzatildi — Android upload "oxirigacha qotib qolish" (server processing)
@@ -2982,6 +3046,7 @@ yangi yo'lni oladi (3 loyiha → 1 ta fayl tahriri).
 - AAB va APK formatlari, Production va Debug rejimlari.
 - Build natijalarini Finder'da avtomatik ochish.
 
+[1.16.2]: https://github.com/Jaloliddin-Fozilov/flutter-build-tool/releases/tag/v1.16.2
 [1.16.1]: https://github.com/Jaloliddin-Fozilov/flutter-build-tool/releases/tag/v1.16.1
 [1.16.0]: https://github.com/Jaloliddin-Fozilov/flutter-build-tool/releases/tag/v1.16.0
 [1.15.3]: https://github.com/Jaloliddin-Fozilov/flutter-build-tool/releases/tag/v1.15.3

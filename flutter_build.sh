@@ -22,7 +22,7 @@
 set -eo pipefail
 
 # ─── Skript ma'lumotlari ──────────────────────────────────
-SCRIPT_VERSION="1.16.1"
+SCRIPT_VERSION="1.16.2"
 SCRIPT_REPO="Jaloliddin-Fozilov/flutter-build-tool"
 SCRIPT_RAW_URL="https://raw.githubusercontent.com/${SCRIPT_REPO}/main/flutter_build.sh"
 
@@ -4223,15 +4223,21 @@ play_generate_jwt() {
 # JWT ni access_token ga ayirboshlash (OAuth2)
 play_get_access_token() {
   local jwt="$1"
-  local response token
+  local response token tok_body_f
 
-  response=$(curl -fsS -X POST "https://oauth2.googleapis.com/token" \
+  # v1.16.2: spinner bilan (network hang ko'rinadi). Spinner stderr'ga yoziladi,
+  # shuning uchun bu funksiyaning stdout return qiymatini ifloslamaydi.
+  tok_body_f=$(mktemp 2>/dev/null || echo "/tmp/fb_tok_$$")
+  _curl_spin "Access token" "$tok_body_f" -X POST "https://oauth2.googleapis.com/token" \
     --connect-timeout 30 --max-time 120 \
     --data-urlencode "grant_type=urn:ietf:params:oauth:grant-type:jwt-bearer" \
-    --data-urlencode "assertion=${jwt}" 2>&1) || {
-      err "Access token so'rovi xato berdi: $response"
-      return 1
-    }
+    --data-urlencode "assertion=${jwt}"
+  response=$(cat "$tok_body_f" 2>/dev/null)
+  rm -f "$tok_body_f"
+  if [ "$SPIN_RC" -ne 0 ] || { [ -n "$SPIN_HTTP" ] && [ "$SPIN_HTTP" -ge 400 ] 2>/dev/null; }; then
+    err "Access token so'rovi xato berdi (HTTP ${SPIN_HTTP:-?}): $response" >&2
+    return 1
+  fi
 
   token=$(printf '%s' "$response" \
     | grep -o '"access_token"[[:space:]]*:[[:space:]]*"[^"]*"' \
@@ -5450,6 +5456,32 @@ EOF
   fi
 }
 
+# v1.16.2: curl'ni elapsed-time spinner bilan ishga tushirish.
+# Har network bosqichi (token, edit, track, commit) faollik ko'rsatadi —
+# sekin internetda ham "qotdimi?" degan savol tug'ilmaydi.
+# Args: <label> <body_outfile> <curl args...>
+# Sets globals: SPIN_RC (curl exit code), SPIN_HTTP (HTTP status). Body -> body_outfile.
+_curl_spin() {
+  local label="$1" outfile="$2"; shift 2
+  local code_f
+  code_f=$(mktemp 2>/dev/null || echo "/tmp/fb_cs_$$_${RANDOM:-x}")
+  # curl fonda: body -> outfile, http_code -> code_f
+  curl -sS "$@" -o "$outfile" -w '%{http_code}' > "$code_f" 2>/dev/null &
+  local pid=$! s=0
+  # MUHIM: spinner STDERR'ga yoziladi — shunda command-substitution ($(...))
+  # ichida chaqirilsa ham, funksiyaning stdout return qiymatini ifloslamaydi.
+  while kill -0 "$pid" 2>/dev/null; do
+    printf '\r  ⏳ %s... %ds' "$label" "$s" >&2
+    sleep 1
+    s=$((s + 1))
+  done
+  wait "$pid"; SPIN_RC=$?
+  # Spinner qatorini tozalash (faqat ko'rsatilgan bo'lsa)
+  [ "$s" -gt 0 ] && printf '\r%*s\r' 56 '' >&2
+  SPIN_HTTP=$(cat "$code_f" 2>/dev/null)
+  rm -f "$code_f"
+}
+
 # AAB ni Play Store'ga yuklash — 5 bosqichli API pipeline
 upload_to_play_store() {
   local aab="$1"
@@ -5528,25 +5560,33 @@ upload_to_play_store() {
   token=$(play_get_access_token "$jwt") || return 1
   ok "Access token olindi"
 
-  # [2/5] Edit yaratish
+  # [2/5] Edit yaratish — v1.16.2: spinner bilan (network hang ko'rinadi)
   info "[2/5] Edit yaratilmoqda..."
-  local edit_response edit_id
-  edit_response=$(curl -fsS -X POST "${api_base}/edits" \
+  local edit_response edit_id edit_body
+  edit_body=$(mktemp 2>/dev/null || echo "/tmp/fb_edit_$$")
+  _curl_spin "Edit yaratish" "$edit_body" -X POST "${api_base}/edits" \
     -H "Authorization: Bearer ${token}" \
     -H "Content-Type: application/json" \
     --connect-timeout 30 --max-time 120 \
-    -d '{}' 2>&1) || {
-      err "Edit yaratish xato: $edit_response"
+    -d '{}'
+  edit_response=$(cat "$edit_body" 2>/dev/null)
+  rm -f "$edit_body"
+  if [ "$SPIN_RC" -ne 0 ] || { [ -n "$SPIN_HTTP" ] && [ "$SPIN_HTTP" -ge 400 ] 2>/dev/null; }; then
+      if [ "$SPIN_RC" -eq 28 ]; then
+        err "Edit yaratish timeout (2 daqiqa) — internet sekin yoki uzildi"
+        return 1
+      fi
+      err "Edit yaratish xato (HTTP ${SPIN_HTTP:-?}): $edit_response"
       # 403 yoki 404 bo'lsa, eng keng tarqalgan sabablar
-      if echo "$edit_response" | grep -q '"code": *403'; then
+      if [ "$SPIN_HTTP" = "403" ] || echo "$edit_response" | grep -q '"code": *403'; then
         info "Sabab: Service Account ruxsatlari yetishmaydi"
         try_this "open https://play.google.com/console/u/0/api-access   # Service Account'ga 'Releases' ruxsatlarini bering"
-      elif echo "$edit_response" | grep -q '"code": *404'; then
+      elif [ "$SPIN_HTTP" = "404" ] || echo "$edit_response" | grep -q '"code": *404'; then
         info "Sabab: app Play Console'da topilmadi yoki birinchi AAB qo'lda yuklanmagan"
         try_this "open 'https://play.google.com/console/u/0/developers/-/app/${package_name}/app-dashboard'"
       fi
       return 1
-    }
+  fi
   edit_id=$(extract_json_field "$edit_response" "id")
   if [ -z "$edit_id" ]; then
     err "edit_id javobdan topilmadi"
@@ -5652,32 +5692,41 @@ upload_to_play_store() {
     fi
   fi
 
-  local track_payload track_response
+  local track_payload track_response track_body_f
   track_payload="{\"releases\":[{\"versionCodes\":[\"${version_code}\"],\"status\":\"${release_status}\"${user_fraction_json}${release_notes_json}}]}"
 
-  track_response=$(curl -fsS -X PUT \
+  # v1.16.2: spinner bilan
+  track_body_f=$(mktemp 2>/dev/null || echo "/tmp/fb_track_$$")
+  _curl_spin "Track qo'shish (${track})" "$track_body_f" -X PUT \
     "${api_base}/edits/${edit_id}/tracks/${track}" \
     -H "Authorization: Bearer ${token}" \
     -H "Content-Type: application/json" \
     --connect-timeout 30 --max-time 120 \
-    -d "$track_payload" 2>&1) || {
-      err "Track qo'shish xato: $track_response"
-      return 1
-    }
+    -d "$track_payload"
+  track_response=$(cat "$track_body_f" 2>/dev/null)
+  rm -f "$track_body_f"
+  if [ "$SPIN_RC" -ne 0 ] || { [ -n "$SPIN_HTTP" ] && [ "$SPIN_HTTP" -ge 400 ] 2>/dev/null; }; then
+    err "Track qo'shish xato (HTTP ${SPIN_HTTP:-?}): $track_response"
+    return 1
+  fi
   ok "Track'ga qo'shildi: $track${user_fraction_json:+ (staged rollout)}"
 
-  # [5/5] Commit
+  # [5/5] Commit — v1.16.2: spinner bilan
   info "[5/5] Edit commit qilinmoqda..."
-  local commit_response
-  commit_response=$(curl -fsS -X POST \
+  local commit_response commit_body_f
+  commit_body_f=$(mktemp 2>/dev/null || echo "/tmp/fb_commit_$$")
+  _curl_spin "Commit" "$commit_body_f" -X POST \
     "${api_base}/edits/${edit_id}:commit" \
     --connect-timeout 30 --max-time 120 \
-    -H "Authorization: Bearer ${token}" 2>&1) || {
-      err "Commit xato: $commit_response"
+    -H "Authorization: Bearer ${token}"
+  commit_response=$(cat "$commit_body_f" 2>/dev/null)
+  rm -f "$commit_body_f"
+  if [ "$SPIN_RC" -ne 0 ] || { [ -n "$SPIN_HTTP" ] && [ "$SPIN_HTTP" -ge 400 ] 2>/dev/null; }; then
+      err "Commit xato (HTTP ${SPIN_HTTP:-?}): $commit_response"
       echo
       # v1.13.0: HTTP code'ga ko'ra batafsil diagnostika
       # v1.13.2: 403 holatida interaktiv recovery menyusi (5 ta variant)
-      if echo "$commit_response" | grep -qE "returned error: 403|HTTP/[12][^ ]* 403|\"code\": *403|forbidden|Forbidden"; then
+      if [ "$SPIN_HTTP" = "403" ] || echo "$commit_response" | grep -qE "\"code\": *403|forbidden|Forbidden"; then
         info "${BOLD}Sabab:${NC} Service Account 'Release Manager' ruxsatiga ega emas"
         info "(Edit yaratish va track qo'shish ishladi — demak ba'zi ruxsat'lar bor,"
         info " lekin commit qilish uchun ${BOLD}'Manage releases'${NC} ruxsati alohida kerak)"
@@ -5696,11 +5745,11 @@ upload_to_play_store() {
         # play_handle_commit_403 1 qaytarsa, foydalanuvchi boshqa yo'l bilan davom etgan
         # (qo'lda upload, saqlash, yoki bekor). Funksiya o'zi tushuntiradi nima qilish.
         return 1
-      elif echo "$commit_response" | grep -qE "returned error: 401|HTTP/[12][^ ]* 401|\"code\": *401|[Uu]nauthorized"; then
+      elif [ "$SPIN_HTTP" = "401" ] || echo "$commit_response" | grep -qE "\"code\": *401|[Uu]nauthorized"; then
         info "${BOLD}Sabab:${NC} Access token muddati o'tdi yoki noto'g'ri"
         info "(token 1 soat amal qiladi — bu nadir)"
         try_this "flutter-build   # qaytadan ishga tushiring (yangi token olinadi)"
-      elif echo "$commit_response" | grep -qE "edit.*not found|editId|404"; then
+      elif [ "$SPIN_HTTP" = "404" ] || echo "$commit_response" | grep -qE "edit.*not found|editId"; then
         info "${BOLD}Sabab:${NC} Edit ID muddati o'tdi (24 soatdan ko'p ochiq turdi)"
         info "(yoki boshqa sessiya bu edit'ni allaqachon commit qilgan)"
         try_this "flutter-build   # qaytadan ishga tushiring"
@@ -5716,7 +5765,7 @@ upload_to_play_store() {
       info "  Qo'lda tekshirish: https://play.google.com/console/u/0/developers/-/app/${package_name}/app-dashboard"
       info "  (Pending changes' bo'limida ko'rinadi — discard yoki commit qilish mumkin)"
       return 1
-    }
+  fi
 
   echo
   ok "Muvaffaqiyatli yuklandi!"
