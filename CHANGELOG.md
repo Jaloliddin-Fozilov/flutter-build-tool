@@ -5,6 +5,87 @@ Loyihaning barcha muhim o'zgarishlari shu faylga yoziladi.
 Format [Keep a Changelog](https://keepachangelog.com/uz/1.1.0/) asosida,
 versiyalash esa [Semantic Versioning](https://semver.org/lang/uz/) qoidasiga rioya qiladi.
 
+## [1.17.0] — 2026-06-09
+
+### Qo'shildi — **Store'dan oxirgi build number'ni avtomatik olish**
+
+User savol: "storelardan avtomatik ohirgi build numberni olishni iloji bormi
+agar bo'lsa avtomatik olishni ham qo'shib ber professional qilib ber".
+
+Mukammal — endi build raqami **Google Play'dagi haqiqiy oxirgi versionCode'dan**
+hisoblanadi. Bu **versionCode conflict'ni butunlay yo'q qiladi** (eng tez-tez
+uchraydigan upload xatosi).
+
+### Qanday ishlaydi (fastlane'ning google_play_latest_version_code kabi)
+
+1. Google Play API'dan barcha yuklangan AAB/APK'lar ro'yxati olinadi
+2. Eng katta versionCode topiladi (store'dagi haqiqiy oxirgi)
+3. Yangi build = **max(lokal, store) + 1** — har doim konfliktsiz
+
+```
+⚡ Express: Store'dan oxirgi build number olinmoqda...
+✓ Store'dan olindi — yangi build: 32 (konflikt yo'q)
+✓ Versiya: 1.0.0+11 → 1.0.0+32
+```
+
+### Express rejimda avtomatik
+
+Auto Deploy (`--auto`) — build'dan oldin avtomatik store'dan so'raydi va
+konfliktsiz raqamni ishlatadi. Savol yo'q.
+
+### Interaktiv rejimda taklif
+
+```
+Store'dan oxirgi build number'ni tekshiraylikmi? (konflikt oldini oladi) (y/n) [y]: y
+
+▶ Google Play'dan oxirgi build number olinmoqda...
+✓ Store'dagi eng oxirgi'dan keyingi tavsiya: 32
+  (Enter bosing — shu tavsiya ishlatiladi)
+
+pubspec.yaml build # (versionCode)  [32]: ↵
+```
+
+### Yangi funksiyalar
+
+- `play_get_latest_version_code` — Play API'dan eng katta versionCode
+  (bundles + apks, edit yaratib-o'chirib)
+- `resolve_play_build_number` — max(lokal, store) + 1 hisoblaydi
+
+### Graceful fallback
+
+Store'dan ololmasa (Google bloklangan, network, yoki birinchi release),
+**lokal +1 ga qaytadi** — build to'xtamaydi:
+
+```
+ℹ Store'dan ololmadi (network/birinchi release) — lokal +1: 12
+```
+
+Tez connectivity probe (10s) — Google bloklangan bo'lsa, uzoq kutmasdan
+darrov fallback.
+
+### iOS cheklovi
+
+App Store Connect build query uchun **`.p8` API key** kerak. Agar siz Apple ID
+(altool/transporter) ishlatsangiz, iOS uchun store fetch ishlamaydi — lokal +1
+ishlatiladi. (Apple ID auth build query API'sini qo'llab-quvvatlamaydi.)
+
+### Foydalar
+
+- **❌ versionCode conflict yo'q** — store haqiqat manbai
+- **🖥️ Multi-machine/CI mos** — har qanday mashinadan to'g'ri raqam
+- **🔄 Qo'lda upload bilan sync** — kimdir qo'lda yuklasa ham, keyingi avtomatik to'g'ri
+
+### Texnik tafsilot
+
+**Store as source of truth**: lokal pubspec raqami noto'g'ri bo'lishi mumkin
+(boshqa mashina, CI, qo'lda upload Play Console'da). Store'ning o'zidan
+so'rash — yagona ishonchli manba. Bu **distributed state reconciliation** —
+markaziy haqiqatdan local'ni hisoblash.
+
+**Edit yaratib-o'qib-o'chirish**: Play API'da o'qish uchun ham edit kerak.
+Biz edit yaratamiz, bundles/apks ro'yxatini olamiz, edit'ni DELETE qilamiz
+(orphan qoldirmaslik). Bu **read-only transaction** patterni.
+
 ## [1.16.4] — 2026-06-09
 
 ### Tashxis — Google Play bloki (Apple ishlaydi, Google yo'q)
@@ -3172,6 +3253,7 @@ yangi yo'lni oladi (3 loyiha → 1 ta fayl tahriri).
 - AAB va APK formatlari, Production va Debug rejimlari.
 - Build natijalarini Finder'da avtomatik ochish.
 
+[1.17.0]: https://github.com/Jaloliddin-Fozilov/flutter-build-tool/releases/tag/v1.17.0
 [1.16.4]: https://github.com/Jaloliddin-Fozilov/flutter-build-tool/releases/tag/v1.16.4
 [1.16.3]: https://github.com/Jaloliddin-Fozilov/flutter-build-tool/releases/tag/v1.16.3
 [1.16.2]: https://github.com/Jaloliddin-Fozilov/flutter-build-tool/releases/tag/v1.16.2

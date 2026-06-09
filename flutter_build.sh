@@ -22,7 +22,7 @@
 set -eo pipefail
 
 # ─── Skript ma'lumotlari ──────────────────────────────────
-SCRIPT_VERSION="1.16.4"
+SCRIPT_VERSION="1.17.0"
 SCRIPT_REPO="Jaloliddin-Fozilov/flutter-build-tool"
 SCRIPT_RAW_URL="https://raw.githubusercontent.com/${SCRIPT_REPO}/main/flutter_build.sh"
 
@@ -4913,6 +4913,97 @@ extract_json_number() {
     | sed -E "s/.*:[[:space:]]*([0-9]+).*/\1/"
 }
 
+# v1.17.0: Google Play'dan ENG OXIRGI versionCode'ni olish (store = haqiqat manbai)
+# Barcha yuklangan AAB (bundles) va APK (apks) ichidan eng katta versionCode.
+# Bu versionCode conflict'ni butunlay yo'q qiladi: new = store_max + 1.
+#
+# Args: package_name sa_path
+# Output (stdout): eng katta versionCode (raqam), yoki bo'sh (xato/topilmadi)
+# Returns: 0 muvaffaqiyat, 1 xato
+play_get_latest_version_code() {
+  local package_name="$1" sa_path="$2"
+  local api_base="https://androidpublisher.googleapis.com/androidpublisher/v3/applications/${package_name}"
+
+  # Tez connectivity probe — Google bloklangan/sekin bo'lsa, darrov fallback
+  # (uzoq kutmaslik uchun — 10 soniya max)
+  local probe
+  probe=$(curl -sS -o /dev/null -w '%{http_code}' \
+    --connect-timeout 8 --max-time 10 \
+    "https://oauth2.googleapis.com/" 2>/dev/null)
+  if [ -z "$probe" ] || [ "$probe" = "000" ]; then
+    return 1   # Google ulanmadi — caller lokal +1 ga fallback qiladi
+  fi
+
+  local jwt token
+  jwt=$(play_generate_jwt "$sa_path" 2>/dev/null) || return 1
+  token=$(play_get_access_token "$jwt" 2>/dev/null) || return 1
+
+  # Edit yaratish (o'qish uchun ham edit kerak)
+  local edit_resp edit_id
+  edit_resp=$(curl -fsS -X POST "${api_base}/edits" \
+    -H "Authorization: Bearer ${token}" \
+    -H "Content-Type: application/json" \
+    --connect-timeout 30 --max-time 120 \
+    -d '{}' 2>/dev/null) || return 1
+  edit_id=$(extract_json_field "$edit_resp" "id")
+  [ -z "$edit_id" ] && return 1
+
+  # Bundles (AAB) va APKs ro'yxati — barcha yuklangan artifact'lar
+  local bundles_resp apks_resp
+  bundles_resp=$(curl -fsS "${api_base}/edits/${edit_id}/bundles" \
+    -H "Authorization: Bearer ${token}" \
+    --connect-timeout 30 --max-time 120 2>/dev/null)
+  apks_resp=$(curl -fsS "${api_base}/edits/${edit_id}/apks" \
+    -H "Authorization: Bearer ${token}" \
+    --connect-timeout 30 --max-time 120 2>/dev/null)
+
+  # Edit'ni o'chirish (cleanup — orphan edit qoldirmaslik)
+  curl -fsS -X DELETE "${api_base}/edits/${edit_id}" \
+    -H "Authorization: Bearer ${token}" \
+    --connect-timeout 30 --max-time 60 > /dev/null 2>&1 || true
+
+  # Barcha versionCode'lardan eng kattasini topish
+  local max_vc
+  max_vc=$( { printf '%s\n' "$bundles_resp"; printf '%s\n' "$apks_resp"; } \
+    | grep -o '"versionCode"[[:space:]]*:[[:space:]]*[0-9]*' \
+    | grep -oE '[0-9]+$' \
+    | sort -n | tail -1)
+
+  [ -z "$max_vc" ] && return 1
+  printf '%s\n' "$max_vc"
+  return 0
+}
+
+# v1.17.0: Store'dan oxirgi build'ga qarab yangi build raqamini hisoblash.
+# new = max(lokal_build, store_max) + 1 — har doim konfliktsiz.
+# Store'dan ololmasa (network/birinchi release), lokal +1 ga fallback.
+#
+# Args: package_name sa_path local_build
+# Output (stdout): tavsiya etilgan yangi build raqami
+resolve_play_build_number() {
+  local package_name="$1" sa_path="$2" local_build="$3"
+  local store_max
+  store_max=$(play_get_latest_version_code "$package_name" "$sa_path" 2>/dev/null)
+
+  if [ -z "$store_max" ]; then
+    # Store'dan ololmadi — lokal +1
+    if [[ "$local_build" =~ ^[0-9]+$ ]]; then
+      printf '%s\n' "$((local_build + 1))"
+    else
+      printf '%s\n' "$local_build"
+    fi
+    return 1   # store'dan olinmadi (caller bilsin)
+  fi
+
+  # max(lokal, store) + 1
+  local base="$store_max"
+  if [[ "$local_build" =~ ^[0-9]+$ ]] && [ "$local_build" -gt "$store_max" ]; then
+    base="$local_build"
+  fi
+  printf '%s\n' "$((base + 1))"
+  return 0   # store'dan olindi
+}
+
 # v1.14.0: Bundle upload 403 handler — YANGI app uchun maxsus
 # Bundle upload bosqichida 403 ko'pincha "birinchi release qo'lda kerak" degani.
 # Google Play API yangi app'ning BIRINCHI versiyasini yuklay olmaydi.
@@ -7002,8 +7093,25 @@ $DO_PUBGET && ok "flutter pub get: ${GREEN}yoqilgan${NC}" || info "flutter pub g
 # v1.15.0: Express rejim — versiyani avtomatik +1 oshiradi, savol so'ramaydi
 if [ "${EXPRESS_MODE:-false}" = "true" ]; then
   new_pname="$PUBSPEC_NAME"
-  # build raqamini avtomatik +1 (resolve_version_input '+' bilan)
+  # v1.17.0: Store'dan oxirgi versionCode'ni olib, undan +1 (konfliktsiz).
+  # Android + Play upload bo'lsa, store'dan so'raymiz. Aks holda lokal +1.
   new_pbuild=$(resolve_version_input "+" "$PUBSPEC_BUILD")
+  if $BUILD_ANDROID && $DO_PLAYSTORE_UPLOAD; then
+    step "⚡ Express: Store'dan oxirgi build number olinmoqda..."
+    local express_pkg express_acc express_sa
+    express_pkg=$(detect_android_package_name 2>/dev/null)
+    express_acc=$(play_project_config_get "$express_pkg" "account" 2>/dev/null)
+    express_sa=$(play_account_get "$express_acc" "service_account_path" 2>/dev/null)
+    if [ -n "$express_sa" ] && [ -f "$express_sa" ]; then
+      local store_build
+      if store_build=$(resolve_play_build_number "$express_pkg" "$express_sa" "$PUBSPEC_BUILD"); then
+        new_pbuild="$store_build"
+        ok "Store'dan olindi — yangi build: ${GREEN}${new_pbuild}${NC} (konflikt yo'q)"
+      else
+        info "Store'dan ololmadi (network/birinchi release) — lokal +1: ${new_pbuild}"
+      fi
+    fi
+  fi
   new_iversion="$new_pname"; new_ibuild="$new_pbuild"
   new_aversion="$new_pname"; new_abuild="$new_pbuild"
   step "⚡ Express: versiya avtomatik oshirildi"
@@ -7038,12 +7146,38 @@ if $both_use_flutter_ref; then
   info "(Android versionCode va iOS build number pubspec.yaml'dan olinadi)"
   info "${BOLD}Versiya oshirish uchun pubspec build # ni oshiring (yoki '+' bosing)${NC}"
 fi
+
+# v1.17.0: Android + Play upload bo'lsa, Store'dan oxirgi build'ni so'rab,
+# tavsiya etilgan raqamni ko'rsatamiz (konflikt oldini olish).
+suggested_build="$PUBSPEC_BUILD"
+if $BUILD_ANDROID && $DO_PLAYSTORE_UPLOAD; then
+  local int_pkg int_acc int_sa fetch_store
+  int_pkg=$(detect_android_package_name 2>/dev/null)
+  int_acc=$(play_project_config_get "$int_pkg" "account" 2>/dev/null)
+  int_sa=$(play_account_get "$int_acc" "service_account_path" 2>/dev/null)
+  if [ -n "$int_sa" ] && [ -f "$int_sa" ]; then
+    echo
+    read -p "  Store'dan oxirgi build number'ni tekshiraylikmi? (konflikt oldini oladi) (y/n) [y]: " fetch_store
+    if [[ ! "$fetch_store" =~ ^[Nn]$ ]]; then
+      step "Google Play'dan oxirgi build number olinmoqda..."
+      local store_rec
+      if store_rec=$(resolve_play_build_number "$int_pkg" "$int_sa" "$PUBSPEC_BUILD"); then
+        suggested_build="$store_rec"
+        ok "Store'dagi eng oxirgi'dan keyingi tavsiya: ${GREEN}${suggested_build}${NC}"
+        info "(Enter bosing — shu tavsiya ishlatiladi)"
+      else
+        info "Store'dan ololmadi (network/birinchi release) — odatiy +1 ishlating"
+      fi
+    fi
+  fi
+fi
 echo
 
 read -p "    pubspec.yaml versiya (versionName)  [${PUBSPEC_NAME}]: " new_pname
-read -p "    pubspec.yaml build # (versionCode)  [${PUBSPEC_BUILD}]: " new_pbuild
+read -p "    pubspec.yaml build # (versionCode)  [${suggested_build}]: " new_pbuild
 new_pname=$(resolve_version_input "$new_pname" "$PUBSPEC_NAME")
-new_pbuild=$(resolve_version_input "$new_pbuild" "$PUBSPEC_BUILD")
+# v1.17.0: bo'sh kiritilsa, suggested_build (store tavsiyasi) ishlatiladi
+new_pbuild=$(resolve_version_input "$new_pbuild" "$suggested_build")
 
 # iOS: faqat HARDCODED bo'lsa alohida so'raladi
 new_iversion="$new_pname"; new_ibuild="$new_pbuild"
