@@ -22,7 +22,7 @@
 set -eo pipefail
 
 # ─── Skript ma'lumotlari ──────────────────────────────────
-SCRIPT_VERSION="1.16.3"
+SCRIPT_VERSION="1.16.4"
 SCRIPT_REPO="Jaloliddin-Fozilov/flutter-build-tool"
 SCRIPT_RAW_URL="https://raw.githubusercontent.com/${SCRIPT_REPO}/main/flutter_build.sh"
 
@@ -65,7 +65,9 @@ pause() {
 express_read() {
   local __ervar="$1" __erdef="$2" __erprompt="$3"
   if [ "${EXPRESS_MODE:-false}" = "true" ]; then
-    printf '%s%s[⚡ auto: %s]%s\n' "$__erprompt" "${BOLD}" "$__erdef" "${NC}" >&2
+    # v1.16.4 FIX: BOLD/NC literal '\033...' string — printf '%s' interpretatsiya
+    # qilmaydi (faqat echo -e). Shuning uchun echo -e ishlatamiz (toza chiqadi).
+    echo -e "${__erprompt}${BOLD}[⚡ auto: ${__erdef}]${NC}" >&2
     printf -v "$__ervar" '%s' "$__erdef"
   else
     read -p "$__erprompt" "$__ervar"
@@ -5563,14 +5565,21 @@ upload_to_play_store() {
   if [ -z "$conn_code" ] || [ "$conn_code" = "000" ]; then
     err "Google API'ga ulanib bo'lmadi (oauth2.googleapis.com)"
     echo
-    info "Sabab — internet sekin, uzilgan, yoki Google bloklangan:"
-    info "  • Boshqa tarmoqda urinib ko'ring (Wi-Fi ↔ mobil)"
-    info "  • VPN yoqilgan bo'lsa, o'chirib ko'ring (yoki yoqing)"
-    info "  • Internet barqarorligini tekshiring"
+    warn "${BOLD}Apple (iOS) ishlasa-yu, Google (Android) ishlamasa — bu Google bloki${NC}"
+    info "O'zbekiston va ba'zi MDH tarmoqlarida Google API'lar sekin/bloklangan."
+    echo
+    info "${BOLD}🎯 ENG SAMARALI yechim: VPN yoqing${NC}"
+    info "  Google Play API'ga ulanish uchun VPN (har qanday) yoqib, qaytadan urinib ko'ring"
+    echo
+    info "Boshqa yechimlar:"
+    info "  • Mobil internet'ga o'ting (Wi-Fi o'rniga) yoki aksincha"
+    info "  • Boshqa DNS: 8.8.8.8 yoki 1.1.1.1"
     echo
     try_this \
       "curl -v --connect-timeout 10 https://oauth2.googleapis.com/   # ulanishni tekshirish" \
-      "ping -c 3 google.com   # umumiy internet tekshiruvi"
+      "# VPN yoqib, keyin: flutter-build --auto"
+    info "AAB tayyor saqlangan — VPN yoqib qaytadan upload qiling (qayta build kerak emas):"
+    info "  ${BOLD}flutter-build${NC} → 3) Upload (build qilmasdan)"
     return 1
   fi
   ok "Google API ulanishi bor (HTTP ${conn_code})"

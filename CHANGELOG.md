@@ -5,6 +5,73 @@ Loyihaning barcha muhim o'zgarishlari shu faylga yoziladi.
 Format [Keep a Changelog](https://keepachangelog.com/uz/1.1.0/) asosida,
 versiyalash esa [Semantic Versioning](https://semver.org/lang/uz/) qoidasiga rioya qiladi.
 
+## [1.16.4] — 2026-06-09
+
+### Tashxis — Google Play bloki (Apple ishlaydi, Google yo'q)
+
+User log tahlili: **iOS Apple'ga muvaffaqiyatli yuklandi** (altool, 2.8MB/s),
+lekin **Play Store "Release notes:" da qotdi**.
+
+Bu aniq belgi: **Apple serverlari ishlaydi, Google serverlari yo'q**. Demak
+internet bor, lekin **Google API (oauth2.googleapis.com) bloklangan yoki
+throttle qilingan** — O'zbekiston va ba'zi MDH tarmoqlarida keng tarqalgan.
+
+### Tuzatildi — express_read literal `\033` ko'rsatardi
+
+User chiqishida:
+```
+Hozir altool bilan qayta urinaylikmi? (y/n) [y]: \033[1m[⚡ auto: y]\033[0m
+```
+
+`\033[1m` literal ko'rinardi. Sabab: `BOLD='\033[1m'` literal string, va
+`printf '%s'` uni interpretatsiya qilmaydi (faqat `echo -e`). Endi `echo -e`
+ishlatiladi — toza chiqadi.
+
+### Yaxshilandi — connectivity check VPN'ni tavsiya qiladi
+
+Google API ulanmasa, endi aniq VPN yo'naltirish:
+
+```
+✗ Google API'ga ulanib bo'lmadi (oauth2.googleapis.com)
+
+⚠ Apple (iOS) ishlasa-yu, Google (Android) ishlamasa — bu Google bloki
+O'zbekiston va ba'zi MDH tarmoqlarida Google API'lar sekin/bloklangan.
+
+🎯 ENG SAMARALI yechim: VPN yoqing
+  Google Play API'ga ulanish uchun VPN (har qanday) yoqib, qaytadan urinib ko'ring
+
+Boshqa yechimlar:
+  • Mobil internet'ga o'ting (Wi-Fi o'rniga) yoki aksincha
+  • Boshqa DNS: 8.8.8.8 yoki 1.1.1.1
+
+AAB tayyor saqlangan — VPN yoqib qaytadan upload qiling (qayta build kerak emas):
+  flutter-build → 3) Upload (build qilmasdan)
+```
+
+### Sizning holatingiz uchun yechim
+
+1. **VPN yoqing** (har qanday — Google Play API'ga ulanish uchun)
+2. Build allaqachon tayyor — qayta build shart emas:
+   ```
+   flutter-build → 3) Upload (build qilmasdan) → Android
+   ```
+3. VPN bilan Google API ulanadi, AAB yuklanadi
+
+### Nega iOS ishladi-yu Android yo'q?
+
+- **iOS (Apple)**: `contentdelivery.apple.com` — bloklanmagan
+- **Android (Google)**: `oauth2.googleapis.com`, `androidpublisher.googleapis.com`
+  — ba'zi tarmoqlarda bloklangan/sekin
+
+Bu **server-specific** muammo, skript muammosi emas. VPN hal qiladi.
+
+### Texnik tafsilot
+
+**Asymmetric connectivity**: bitta tarmoqda turli xizmatlar turli holatda
+bo'lishi mumkin (Apple reachable, Google blocked). Diagnostika har xizmatni
+ALOHIDA tekshirishi kerak. Connectivity check aynan shuni qiladi —
+Google'ni alohida probe qilib, aniq xabar beradi.
+
 ## [1.16.3] — 2026-06-08
 
 ### Qo'shildi — Google API connectivity pre-check (tez fail, hang emas)
@@ -3105,6 +3172,7 @@ yangi yo'lni oladi (3 loyiha → 1 ta fayl tahriri).
 - AAB va APK formatlari, Production va Debug rejimlari.
 - Build natijalarini Finder'da avtomatik ochish.
 
+[1.16.4]: https://github.com/Jaloliddin-Fozilov/flutter-build-tool/releases/tag/v1.16.4
 [1.16.3]: https://github.com/Jaloliddin-Fozilov/flutter-build-tool/releases/tag/v1.16.3
 [1.16.2]: https://github.com/Jaloliddin-Fozilov/flutter-build-tool/releases/tag/v1.16.2
 [1.16.1]: https://github.com/Jaloliddin-Fozilov/flutter-build-tool/releases/tag/v1.16.1
