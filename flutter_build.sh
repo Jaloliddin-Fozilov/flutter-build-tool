@@ -22,7 +22,7 @@
 set -eo pipefail
 
 # ─── Skript ma'lumotlari ──────────────────────────────────
-SCRIPT_VERSION="1.17.0"
+SCRIPT_VERSION="1.17.1"
 SCRIPT_REPO="Jaloliddin-Fozilov/flutter-build-tool"
 SCRIPT_RAW_URL="https://raw.githubusercontent.com/${SCRIPT_REPO}/main/flutter_build.sh"
 
@@ -4974,19 +4974,24 @@ play_get_latest_version_code() {
   return 0
 }
 
-# v1.17.0: Store'dan oxirgi build'ga qarab yangi build raqamini hisoblash.
-# new = max(lokal_build, store_max) + 1 — har doim konfliktsiz.
+# v1.17.1: Store'dan oxirgi build'ni olib, FAQAT +1 qiladi.
+# Foydalanuvchi: "shu ohirgi versiyani olib +1 qilib chiqazib bersin".
+# Ya'ni: store_max + 1 (lokal pubspec'ga qaramaymiz — store yagona manba).
 # Store'dan ololmasa (network/birinchi release), lokal +1 ga fallback.
 #
 # Args: package_name sa_path local_build
-# Output (stdout): tavsiya etilgan yangi build raqami
+# Output (stdout): yangi build raqami (store_max + 1)
+# Side effect: STORE_LATEST_VC global'ga store'dagi oxirgi qiymat yoziladi
+#   (caller "Store'dagi oxirgi: X" deb ko'rsatishi uchun)
+STORE_LATEST_VC=""
 resolve_play_build_number() {
   local package_name="$1" sa_path="$2" local_build="$3"
   local store_max
   store_max=$(play_get_latest_version_code "$package_name" "$sa_path" 2>/dev/null)
+  STORE_LATEST_VC="$store_max"
 
   if [ -z "$store_max" ]; then
-    # Store'dan ololmadi — lokal +1
+    # Store'dan ololmadi — lokal +1 (fallback)
     if [[ "$local_build" =~ ^[0-9]+$ ]]; then
       printf '%s\n' "$((local_build + 1))"
     else
@@ -4995,12 +5000,8 @@ resolve_play_build_number() {
     return 1   # store'dan olinmadi (caller bilsin)
   fi
 
-  # max(lokal, store) + 1
-  local base="$store_max"
-  if [[ "$local_build" =~ ^[0-9]+$ ]] && [ "$local_build" -gt "$store_max" ]; then
-    base="$local_build"
-  fi
-  printf '%s\n' "$((base + 1))"
+  # Store'dagi oxirgi + 1 (toza — foydalanuvchi shuni so'radi)
+  printf '%s\n' "$((store_max + 1))"
   return 0   # store'dan olindi
 }
 
@@ -7093,8 +7094,9 @@ $DO_PUBGET && ok "flutter pub get: ${GREEN}yoqilgan${NC}" || info "flutter pub g
 # v1.15.0: Express rejim — versiyani avtomatik +1 oshiradi, savol so'ramaydi
 if [ "${EXPRESS_MODE:-false}" = "true" ]; then
   new_pname="$PUBSPEC_NAME"
-  # v1.17.0: Store'dan oxirgi versionCode'ni olib, undan +1 (konfliktsiz).
-  # Android + Play upload bo'lsa, store'dan so'raymiz. Aks holda lokal +1.
+  # v1.17.1: Store'dagi OXIRGI versionCode'ni olib, FAQAT +1 (foydalanuvchi:
+  # "ohirgi versiyani olib +1 qilib chiqazib bersin"). Android+Play bo'lsa
+  # store'dan; aks holda lokal +1.
   new_pbuild=$(resolve_version_input "+" "$PUBSPEC_BUILD")
   if $BUILD_ANDROID && $DO_PLAYSTORE_UPLOAD; then
     step "⚡ Express: Store'dan oxirgi build number olinmoqda..."
@@ -7106,7 +7108,7 @@ if [ "${EXPRESS_MODE:-false}" = "true" ]; then
       local store_build
       if store_build=$(resolve_play_build_number "$express_pkg" "$express_sa" "$PUBSPEC_BUILD"); then
         new_pbuild="$store_build"
-        ok "Store'dan olindi — yangi build: ${GREEN}${new_pbuild}${NC} (konflikt yo'q)"
+        ok "Store'dagi oxirgi: ${YELLOW}${STORE_LATEST_VC}${NC} → +1 → yangi build: ${GREEN}${new_pbuild}${NC} (konflikt yo'q)"
       else
         info "Store'dan ololmadi (network/birinchi release) — lokal +1: ${new_pbuild}"
       fi
@@ -7163,7 +7165,7 @@ if $BUILD_ANDROID && $DO_PLAYSTORE_UPLOAD; then
       local store_rec
       if store_rec=$(resolve_play_build_number "$int_pkg" "$int_sa" "$PUBSPEC_BUILD"); then
         suggested_build="$store_rec"
-        ok "Store'dagi eng oxirgi'dan keyingi tavsiya: ${GREEN}${suggested_build}${NC}"
+        ok "Store'dagi oxirgi: ${YELLOW}${STORE_LATEST_VC}${NC} → +1 → tavsiya: ${GREEN}${suggested_build}${NC}"
         info "(Enter bosing — shu tavsiya ishlatiladi)"
       else
         info "Store'dan ololmadi (network/birinchi release) — odatiy +1 ishlating"

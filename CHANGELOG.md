@@ -5,6 +5,52 @@ Loyihaning barcha muhim o'zgarishlari shu faylga yoziladi.
 Format [Keep a Changelog](https://keepachangelog.com/uz/1.1.0/) asosida,
 versiyalash esa [Semantic Versioning](https://semver.org/lang/uz/) qoidasiga rioya qiladi.
 
+## [1.17.1] — 2026-06-09
+
+### O'zgartirildi — toza `store + 1` (lokal pubspec'ga qaramaydi)
+
+User savol: "xullas auto deploy bosilganda shu ohirgi versiyani olib +1 qilib
+chiqazib bersin".
+
+v1.17.0 da `max(lokal, store) + 1` ishlatardi. Endi **toza `store + 1`** —
+foydalanuvchi aniq shuni so'radi: store'dagi oxirgi versiyani olib, +1.
+
+### Farq
+
+| Holat | v1.17.0 (max+1) | v1.17.1 (store+1) |
+|-------|-----------------|-------------------|
+| store=31, lokal=11 | 32 | **32** |
+| store=31, lokal=40 | 41 (lokal ustun) | **32** (store ustun) |
+
+Endi lokal pubspec build raqami **ahamiyatsiz** — faqat store'dagi oxirgi
+muhim. Bu eng sodda va tushunarli: "store'da nima bor, +1".
+
+### Aniqroq xabar
+
+```
+⚡ Express: Store'dan oxirgi build number olinmoqda...
+✓ Store'dagi oxirgi: 31 → +1 → yangi build: 32 (konflikt yo'q)
+✓ Versiya: 1.0.0+11 → 1.0.0+32
+```
+
+Endi aniq ko'rinadi: store'da 31 bor edi, yangi 32.
+
+### Nega store+1 (max emas)?
+
+- **Sodda**: "store'dagi oxirgi + 1" — tushunish oson
+- **Konfliktsiz**: store_max + 1 har doim store'da yo'q (kafolatlangan)
+- **Lokal sync shart emas**: pubspec build raqami eskirgan/noto'g'ri bo'lsa
+  ham muammo yo'q — store haqiqat manbai
+
+### Texnik tafsilot
+
+**Authoritative source wins**: lokal va store o'rtasida ziddiyat bo'lsa,
+**store g'olib** (max emas). Bu "store = haqiqat" tamoyilining sof shakli.
+Lokal raqam faqat store ololmaganda (fallback) ishlatiladi.
+
+`STORE_LATEST_VC` global — store'dagi oxirgi qiymatni caller'ga uzatadi
+(aniq xabar ko'rsatish uchun).
+
 ## [1.17.0] — 2026-06-09
 
 ### Qo'shildi — **Store'dan oxirgi build number'ni avtomatik olish**
@@ -3253,6 +3299,7 @@ yangi yo'lni oladi (3 loyiha → 1 ta fayl tahriri).
 - AAB va APK formatlari, Production va Debug rejimlari.
 - Build natijalarini Finder'da avtomatik ochish.
 
+[1.17.1]: https://github.com/Jaloliddin-Fozilov/flutter-build-tool/releases/tag/v1.17.1
 [1.17.0]: https://github.com/Jaloliddin-Fozilov/flutter-build-tool/releases/tag/v1.17.0
 [1.16.4]: https://github.com/Jaloliddin-Fozilov/flutter-build-tool/releases/tag/v1.16.4
 [1.16.3]: https://github.com/Jaloliddin-Fozilov/flutter-build-tool/releases/tag/v1.16.3
