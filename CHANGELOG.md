@@ -5,6 +5,61 @@ Loyihaning barcha muhim o'zgarishlari shu faylga yoziladi.
 Format [Keep a Changelog](https://keepachangelog.com/uz/1.1.0/) asosida,
 versiyalash esa [Semantic Versioning](https://semver.org/lang/uz/) qoidasiga rioya qiladi.
 
+## [1.17.2] — 2026-06-09
+
+### Tuzatildi — `Store'dagi oxirgi: (bo'sh)` (subshell global trap)
+
+User log: `✓ Store'dagi oxirgi:  → +1 → yangi build: 26` — store qiymati
+**bo'sh** ko'rindi.
+
+Sabab: `store_build=$(resolve_play_build_number ...)` — funksiya **subshell**'da
+ishlaydi. Uning ichida o'rnatilgan `STORE_LATEST_VC` global o'zgaruvchi
+**parent'ga o'tmaydi** (faqat stdout o'tadi). Klassik bash tuzog'i.
+
+Fix: `play_get_latest_version_code`'ni to'g'ridan-to'g'ri `$()` da chaqiramiz —
+store_max stdout orqali to'g'ri keladi:
+
+```
+✓ Store'dagi oxirgi: 31 → +1 → yangi build: 32 (konflikt yo'q)
+```
+
+### Yaxshilandi — connectivity check spinner
+
+Google API tekshiruvi endi spinner ko'rsatadi (15s kutish ko'rinadi):
+
+```
+  ⏳ Google API ulanishi tekshirilmoqda... 3s
+```
+
+### "Android'ga yuklamayapti" — tashxis
+
+Agar upload "Release notes:" dan keyin to'xtab qolsa, v1.17.2 da quyidagilar
+ketma-ket ko'rinadi (har biri spinner bilan):
+
+```
+Release notes: ...
+  ⏳ Google API ulanishi tekshirilmoqda... 1s
+✓ Google API ulanishi bor (HTTP 404)
+[1/5] Access token olinmoqda...
+  ⏳ Access token... 2s
+[2/5] Edit yaratilmoqda...
+  ⏳ Edit yaratish... 1s
+[3/5] AAB yuklanmoqda (98 MB)...
+  ⏳ Yuklanmoqda... 47s        ← 98 MB sekin internetda 2-5 daqiqa
+✓ Muvaffaqiyatli yuklandi!
+```
+
+**MUHIM**: 98 MB AAB sekin internet/VPN'da **bir necha daqiqa** yuklanadi.
+Spinner harakatlanayotgan bo'lsa — kuting (qotmagan). Faqat **to'xtagan**
+spinner = muammo.
+
+### Texnik tafsilot
+
+**Subshell variable scope**: `$(...)` yangi subshell yaratadi. Subshell'da
+o'rnatilgan o'zgaruvchilar parent'ga ko'rinmaydi (faqat stdout/exit code).
+Global'ni "qaytarish" uchun stdout orqali uzatish kerak. Bizning fix —
+qiymatni to'g'ridan-to'g'ri stdout'dan olish.
+
 ## [1.17.1] — 2026-06-09
 
 ### O'zgartirildi — toza `store + 1` (lokal pubspec'ga qaramaydi)
@@ -3299,6 +3354,7 @@ yangi yo'lni oladi (3 loyiha → 1 ta fayl tahriri).
 - AAB va APK formatlari, Production va Debug rejimlari.
 - Build natijalarini Finder'da avtomatik ochish.
 
+[1.17.2]: https://github.com/Jaloliddin-Fozilov/flutter-build-tool/releases/tag/v1.17.2
 [1.17.1]: https://github.com/Jaloliddin-Fozilov/flutter-build-tool/releases/tag/v1.17.1
 [1.17.0]: https://github.com/Jaloliddin-Fozilov/flutter-build-tool/releases/tag/v1.17.0
 [1.16.4]: https://github.com/Jaloliddin-Fozilov/flutter-build-tool/releases/tag/v1.16.4

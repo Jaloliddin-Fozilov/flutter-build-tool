@@ -22,7 +22,7 @@
 set -eo pipefail
 
 # ─── Skript ma'lumotlari ──────────────────────────────────
-SCRIPT_VERSION="1.17.1"
+SCRIPT_VERSION="1.17.2"
 SCRIPT_REPO="Jaloliddin-Fozilov/flutter-build-tool"
 SCRIPT_RAW_URL="https://raw.githubusercontent.com/${SCRIPT_REPO}/main/flutter_build.sh"
 
@@ -5649,11 +5649,14 @@ upload_to_play_store() {
 
   # v1.16.3: tez connectivity pre-check — Google API'ga ulanib bo'lmasa, uzoq
   # hang o'rniga DARROV aniq xabar. (Ba'zi tarmoqlarda Google bloklangan/sekin.)
-  info "Google API ulanishi tekshirilmoqda..."
-  local conn_code
-  conn_code=$(curl -sS -o /dev/null -w '%{http_code}' \
+  # v1.17.2: spinner bilan (15s kutish ko'rinadi, qotgandek tuyulmaydi)
+  local conn_code conn_body_f
+  conn_body_f=$(mktemp 2>/dev/null || echo "/tmp/fb_conn_$$")
+  _curl_spin "Google API ulanishi tekshirilmoqda" "$conn_body_f" \
     --connect-timeout 10 --max-time 15 \
-    "https://oauth2.googleapis.com/" 2>/dev/null)
+    "https://oauth2.googleapis.com/"
+  rm -f "$conn_body_f"
+  conn_code="$SPIN_HTTP"
   if [ -z "$conn_code" ] || [ "$conn_code" = "000" ]; then
     err "Google API'ga ulanib bo'lmadi (oauth2.googleapis.com)"
     echo
@@ -7097,20 +7100,24 @@ if [ "${EXPRESS_MODE:-false}" = "true" ]; then
   # v1.17.1: Store'dagi OXIRGI versionCode'ni olib, FAQAT +1 (foydalanuvchi:
   # "ohirgi versiyani olib +1 qilib chiqazib bersin"). Android+Play bo'lsa
   # store'dan; aks holda lokal +1.
+  # Default: lokal +1 (store ololmasa)
   new_pbuild=$(resolve_version_input "+" "$PUBSPEC_BUILD")
   if $BUILD_ANDROID && $DO_PLAYSTORE_UPLOAD; then
     step "⚡ Express: Store'dan oxirgi build number olinmoqda..."
-    local express_pkg express_acc express_sa
+    local express_pkg express_acc express_sa store_max
     express_pkg=$(detect_android_package_name 2>/dev/null)
     express_acc=$(play_project_config_get "$express_pkg" "account" 2>/dev/null)
     express_sa=$(play_account_get "$express_acc" "service_account_path" 2>/dev/null)
     if [ -n "$express_sa" ] && [ -f "$express_sa" ]; then
-      local store_build
-      if store_build=$(resolve_play_build_number "$express_pkg" "$express_sa" "$PUBSPEC_BUILD"); then
-        new_pbuild="$store_build"
-        ok "Store'dagi oxirgi: ${YELLOW}${STORE_LATEST_VC}${NC} → +1 → yangi build: ${GREEN}${new_pbuild}${NC} (konflikt yo'q)"
+      # v1.17.2 FIX: play_get_latest_version_code'ni TO'G'RIDAN-TO'G'RI chaqiramiz
+      # (subshell global trap'idan qochish — store_max stdout orqali keladi)
+      store_max=$(play_get_latest_version_code "$express_pkg" "$express_sa" 2>/dev/null)
+      if [ -n "$store_max" ] && [[ "$store_max" =~ ^[0-9]+$ ]]; then
+        new_pbuild=$((store_max + 1))
+        ok "Store'dagi oxirgi: ${YELLOW}${store_max}${NC} → +1 → yangi build: ${GREEN}${new_pbuild}${NC} (konflikt yo'q)"
       else
-        info "Store'dan ololmadi (network/birinchi release) — lokal +1: ${new_pbuild}"
+        info "Store'dan ololmadi (Google blok/network/birinchi release) — lokal +1: ${YELLOW}${new_pbuild}${NC}"
+        info "(Google API uchun VPN kerak bo'lishi mumkin)"
       fi
     fi
   fi
@@ -7162,13 +7169,16 @@ if $BUILD_ANDROID && $DO_PLAYSTORE_UPLOAD; then
     read -p "  Store'dan oxirgi build number'ni tekshiraylikmi? (konflikt oldini oladi) (y/n) [y]: " fetch_store
     if [[ ! "$fetch_store" =~ ^[Nn]$ ]]; then
       step "Google Play'dan oxirgi build number olinmoqda..."
-      local store_rec
-      if store_rec=$(resolve_play_build_number "$int_pkg" "$int_sa" "$PUBSPEC_BUILD"); then
-        suggested_build="$store_rec"
-        ok "Store'dagi oxirgi: ${YELLOW}${STORE_LATEST_VC}${NC} → +1 → tavsiya: ${GREEN}${suggested_build}${NC}"
+      # v1.17.2 FIX: to'g'ridan-to'g'ri (subshell global trap'idan qochish)
+      local int_store_max
+      int_store_max=$(play_get_latest_version_code "$int_pkg" "$int_sa" 2>/dev/null)
+      if [ -n "$int_store_max" ] && [[ "$int_store_max" =~ ^[0-9]+$ ]]; then
+        suggested_build=$((int_store_max + 1))
+        ok "Store'dagi oxirgi: ${YELLOW}${int_store_max}${NC} → +1 → tavsiya: ${GREEN}${suggested_build}${NC}"
         info "(Enter bosing — shu tavsiya ishlatiladi)"
       else
-        info "Store'dan ololmadi (network/birinchi release) — odatiy +1 ishlating"
+        info "Store'dan ololmadi (Google blok/network/birinchi release) — odatiy +1 ishlating"
+        info "(Google API uchun VPN kerak bo'lishi mumkin)"
       fi
     fi
   fi
