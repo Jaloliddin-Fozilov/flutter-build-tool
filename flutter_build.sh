@@ -22,7 +22,7 @@
 set -eo pipefail
 
 # ─── Skript ma'lumotlari ──────────────────────────────────
-SCRIPT_VERSION="1.17.3"
+SCRIPT_VERSION="1.17.4"
 SCRIPT_REPO="Jaloliddin-Fozilov/flutter-build-tool"
 SCRIPT_RAW_URL="https://raw.githubusercontent.com/${SCRIPT_REPO}/main/flutter_build.sh"
 
@@ -7152,7 +7152,9 @@ if [ "${EXPRESS_MODE:-false}" = "true" ]; then
   STAGED_ROLLOUT_FRACTION="1.0"
 else  # ── Oddiy interaktiv rejim ──
 step "Yangi versiyalarni kiriting"
-info "Enter — hozirgi qiymatni saqlaydi  |  + — oxirgi raqamni +1 ga oshirish"
+# v1.17.4: default endi +1 (avtomatik oshadi) — Enter bossangiz versiya oshadi.
+# Joriy qiymatni saqlash uchun raqamni qo'lda yozing.
+info "Enter — avtomatik +1 oshiradi  |  raqam yozing — aniq qiymat  |  + — oshirish"
 
 # Platformalar pubspec'ga bog'liqmi yoki hardcoded'mi — aniqlaymiz
 both_use_flutter_ref=true
@@ -7163,12 +7165,16 @@ if $both_use_flutter_ref; then
   echo
   ok "Bu loyiha pubspec.yaml'ni yagona manba sifatida ishlatadi"
   info "(Android versionCode va iOS build number pubspec.yaml'dan olinadi)"
-  info "${BOLD}Versiya oshirish uchun pubspec build # ni oshiring (yoki '+' bosing)${NC}"
 fi
 
+# v1.17.4: default = joriy build + 1 (avtomatik oshirish — eng tez-tez holat).
+# Enter bossangiz versiya oshadi. Joriy'ni saqlash uchun raqamni yozing.
+suggested_build="$PUBSPEC_BUILD"
+if [[ "$PUBSPEC_BUILD" =~ ^[0-9]+$ ]]; then
+  suggested_build=$((PUBSPEC_BUILD + 1))
+fi
 # v1.17.0: Android + Play upload bo'lsa, Store'dan oxirgi build'ni so'rab,
 # tavsiya etilgan raqamni ko'rsatamiz (konflikt oldini olish).
-suggested_build="$PUBSPEC_BUILD"
 if $BUILD_ANDROID && $DO_PLAYSTORE_UPLOAD; then
   local int_pkg int_acc int_sa fetch_store
   int_pkg=$(detect_android_package_name 2>/dev/null)

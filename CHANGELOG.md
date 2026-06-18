@@ -5,6 +5,57 @@ Loyihaning barcha muhim o'zgarishlari shu faylga yoziladi.
 Format [Keep a Changelog](https://keepachangelog.com/uz/1.1.0/) asosida,
 versiyalash esa [Semantic Versioning](https://semver.org/lang/uz/) qoidasiga rioya qiladi.
 
+## [1.17.4] — 2026-06-09
+
+### O'zgartirildi — interaktiv Build'da versiya default = **+1** (avtomatik oshadi)
+
+User: "androidda versiya ochirmayapti" — interaktiv Build'da versiya
+o'zgarmadi.
+
+### Sabab
+
+Interaktiv Build'da (option 2) versiya prompt'ining default'i **joriy qiymat**
+edi:
+```
+pubspec.yaml build # (versionCode)  [15]:    ← Enter → 15 (o'zgarmaydi)
+```
+
+Foydalanuvchi Enter bosib, versiya 15 da qoldi. Deploy tool'da eng tez-tez
+holat — versiyani **oshirish**, lekin default "saqlash" edi.
+
+### Fix — default endi joriy + 1
+
+```
+pubspec.yaml build # (versionCode)  [16]:    ← Enter → 16 (avtomatik +1)
+```
+
+Endi:
+- **Enter** → build # avtomatik +1 oshadi (16)
+- **Raqam yozish** → aniq qiymat (masalan 20)
+- **Joriy'ni saqlash** → joriy raqamni yozing (15)
+
+versionName (1.0.11) o'zgarmaydi — faqat build # oshadi (eng tez-tez naqsh).
+
+### Play upload + store fetch bilan
+
+Agar Play upload yoqilgan bo'lsa, default **store+1** (store'dan oxirgi).
+Aks holda **lokal+1**. Har holda Enter bosish versiyani oshiradi.
+
+### Foydalanuvchi tajriba taqqoslash
+
+| Senariy | v1.17.3 | v1.17.4 |
+|---------|---------|---------|
+| Build, Enter bosish | Versiya o'zgarmaydi | **+1 oshadi** |
+| Store fetch + Enter | store+1 | store+1 |
+| Joriy'ni saqlash | Enter | Raqamni yozish |
+
+### Texnik tafsilot
+
+**Sensible default**: deploy tool'da "build qilish" odatda "yangi versiya
+chiqarish" degani. Shuning uchun default **+1** bo'lishi mantiqiy. Bu
+**convention over configuration** — eng tez-tez holatni default qilish.
+Foydalanuvchi kamdan-kam holat (joriy'ni saqlash) uchun raqam yozadi.
+
 ## [1.17.3] — 2026-06-09
 
 ### Qo'shildi — persistent heartbeat (`\r` spinner paste'da yo'qolardi)
@@ -3402,6 +3453,7 @@ yangi yo'lni oladi (3 loyiha → 1 ta fayl tahriri).
 - AAB va APK formatlari, Production va Debug rejimlari.
 - Build natijalarini Finder'da avtomatik ochish.
 
+[1.17.4]: https://github.com/Jaloliddin-Fozilov/flutter-build-tool/releases/tag/v1.17.4
 [1.17.3]: https://github.com/Jaloliddin-Fozilov/flutter-build-tool/releases/tag/v1.17.3
 [1.17.2]: https://github.com/Jaloliddin-Fozilov/flutter-build-tool/releases/tag/v1.17.2
 [1.17.1]: https://github.com/Jaloliddin-Fozilov/flutter-build-tool/releases/tag/v1.17.1
