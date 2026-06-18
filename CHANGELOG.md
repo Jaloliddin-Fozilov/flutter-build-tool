@@ -5,6 +5,62 @@ Loyihaning barcha muhim o'zgarishlari shu faylga yoziladi.
 Format [Keep a Changelog](https://keepachangelog.com/uz/1.1.0/) asosida,
 versiyalash esa [Semantic Versioning](https://semver.org/lang/uz/) qoidasiga rioya qiladi.
 
+## [1.17.5] — 2026-06-09
+
+### 🔴 KRITIK FIX — versiya `flutter build` flag'lari orqali (har doim ishlaydi)
+
+User: "androidda build number oshmayapti pubspeckdan o(l)mayapti, custom
+kiritsam ham ishlamadi".
+
+### Sabab — `flutter.versionCode` reference ishonchsiz
+
+Versiya pubspec → build.gradle (`flutter.versionCode` reference) → AAB
+zanjiri orqali o'tardi. Ba'zi loyihalarda (eski template, custom setup) bu
+reference pubspec'dan **o'qimaydi** — natijada custom build number ham
+ta'sir qilmaydi.
+
+### Fix — `--build-name` / `--build-number` flag'lari
+
+Endi versiya `flutter build` ga **to'g'ridan-to'g'ri flag** orqali uzatiladi:
+
+```
+flutter build appbundle --release --build-name=1.0.11 --build-number=20
+```
+
+Bu flag'lar pubspec va build.gradle'dan **USTUN** — Flutter ularni
+to'g'ridan-to'g'ri AAB/IPA ga yozadi. `flutter.versionCode` reference
+ishlamasa ham, versiya **albatta** qo'llanadi.
+
+Android (appbundle/apk) va iOS (ipa) — ikkalasida ham.
+
+### O'zgartirildi — auto +1 o'chirildi (default = joriy)
+
+User: "avtomatik oshmasin". v1.17.4'dagi avtomatik +1 default qaytarildi:
+
+```
+pubspec.yaml build # (versionCode)  [15]:    ← Enter → 15 (saqlanadi)
+```
+
+Oshirish uchun **'+'** bosing yoki yangi raqam yozing. Endi avtomatik oshmaydi.
+
+### Endi versiya 100% ishonchli
+
+| Holat | Avval | v1.17.5 |
+|-------|-------|---------|
+| Custom build # kiritish | Ba'zan ishlamasdi | **Albatta ishlaydi** (flag) |
+| pubspec'dan o'qish | Reference'ga bog'liq | Flag bilan kafolatlangan |
+| Eski template | Buzilardi | Flag bilan ishlaydi |
+
+### Texnik tafsilot
+
+**Build flags > config files**: `--build-name`/`--build-number` Flutter'ning
+eng ishonchli versiya berish usuli — ular pubspec, build.gradle, project.pbxproj
+hammasidan ustun. Config fayllarga tayanish o'rniga, build vaqtida aniq qiymat
+berish — **explicit over implicit**.
+
+**Belt and suspenders**: pubspec ham yangilanadi (repo izchilligi uchun) VA
+flag ham uzatiladi (build uchun). Ikkala mexanizm — maksimal ishonchlilik.
+
 ## [1.17.4] — 2026-06-09
 
 ### O'zgartirildi — interaktiv Build'da versiya default = **+1** (avtomatik oshadi)
@@ -3453,6 +3509,7 @@ yangi yo'lni oladi (3 loyiha → 1 ta fayl tahriri).
 - AAB va APK formatlari, Production va Debug rejimlari.
 - Build natijalarini Finder'da avtomatik ochish.
 
+[1.17.5]: https://github.com/Jaloliddin-Fozilov/flutter-build-tool/releases/tag/v1.17.5
 [1.17.4]: https://github.com/Jaloliddin-Fozilov/flutter-build-tool/releases/tag/v1.17.4
 [1.17.3]: https://github.com/Jaloliddin-Fozilov/flutter-build-tool/releases/tag/v1.17.3
 [1.17.2]: https://github.com/Jaloliddin-Fozilov/flutter-build-tool/releases/tag/v1.17.2

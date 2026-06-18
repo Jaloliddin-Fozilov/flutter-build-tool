@@ -22,7 +22,7 @@
 set -eo pipefail
 
 # ─── Skript ma'lumotlari ──────────────────────────────────
-SCRIPT_VERSION="1.17.4"
+SCRIPT_VERSION="1.17.5"
 SCRIPT_REPO="Jaloliddin-Fozilov/flutter-build-tool"
 SCRIPT_RAW_URL="https://raw.githubusercontent.com/${SCRIPT_REPO}/main/flutter_build.sh"
 
@@ -7152,9 +7152,9 @@ if [ "${EXPRESS_MODE:-false}" = "true" ]; then
   STAGED_ROLLOUT_FRACTION="1.0"
 else  # ── Oddiy interaktiv rejim ──
 step "Yangi versiyalarni kiriting"
-# v1.17.4: default endi +1 (avtomatik oshadi) — Enter bossangiz versiya oshadi.
-# Joriy qiymatni saqlash uchun raqamni qo'lda yozing.
-info "Enter — avtomatik +1 oshiradi  |  raqam yozing — aniq qiymat  |  + — oshirish"
+# v1.17.5: default = JORIY qiymat (avtomatik oshmaydi — user so'rovi).
+# Oshirish uchun '+' bosing yoki yangi raqam yozing.
+info "Enter — hozirgi qiymatni saqlaydi  |  + — oxirgi raqamni +1 ga oshirish"
 
 # Platformalar pubspec'ga bog'liqmi yoki hardcoded'mi — aniqlaymiz
 both_use_flutter_ref=true
@@ -7165,12 +7165,12 @@ if $both_use_flutter_ref; then
   echo
   ok "Bu loyiha pubspec.yaml'ni yagona manba sifatida ishlatadi"
   info "(Android versionCode va iOS build number pubspec.yaml'dan olinadi)"
+  info "${BOLD}Oshirish uchun '+' bosing yoki yangi raqam yozing${NC}"
 fi
 
-# v1.17.4: default = joriy build + 1 (avtomatik oshirish — eng tez-tez holat).
-# Enter bossangiz versiya oshadi. Joriy'ni saqlash uchun raqamni yozing.
+# v1.17.5: default = JORIY (avtomatik oshmaydi). Store fetch bo'lsa store+1.
 suggested_build="$PUBSPEC_BUILD"
-if [[ "$PUBSPEC_BUILD" =~ ^[0-9]+$ ]]; then
+if false; then  # v1.17.5: auto +1 o'chirildi (user: "avtomatik oshmasin")
   suggested_build=$((PUBSPEC_BUILD + 1))
 fi
 # v1.17.0: Android + Play upload bo'lsa, Store'dan oxirgi build'ni so'rab,
@@ -7350,9 +7350,18 @@ if $BUILD_ANDROID; then
   build_subdir=$($IS_PROD && echo "release" || echo "debug")
   android_build_log=$(mktemp 2>/dev/null || echo "/tmp/fb_android_build.$$")
 
+  # v1.17.5 KRITIK FIX: versiyani flutter build flag'lari orqali TO'G'RIDAN-TO'G'RI
+  # uzatamiz. Bu pubspec/build.gradle'dan USTUN — flutter.versionCode reference
+  # ishlamasa ham (eski template), versiya albatta qo'llanadi.
+  # "androidda build number oshmayapti, custom kiritsam ham ishlamadi" muammosi yechimi.
+  android_version_flags=""
+  if [ -n "$new_pname" ] && [ -n "$new_pbuild" ]; then
+    android_version_flags="--build-name=${new_pname} --build-number=${new_pbuild}"
+  fi
+
   if $BUILD_AAB; then
-    info "flutter build appbundle ${build_variant}"
-    flutter build appbundle ${build_variant} 2>&1 | tee "$android_build_log"
+    info "flutter build appbundle ${build_variant} ${android_version_flags}"
+    flutter build appbundle ${build_variant} ${android_version_flags} 2>&1 | tee "$android_build_log"
     android_build_rc=${PIPESTATUS[0]}
     if [ "$android_build_rc" -ne 0 ]; then
       handle_android_build_failure "appbundle" "$android_build_rc" "$android_build_log" "$build_variant"
@@ -7364,8 +7373,8 @@ if $BUILD_ANDROID; then
   fi
 
   if $BUILD_APK; then
-    info "flutter build apk ${build_variant}"
-    flutter build apk ${build_variant} 2>&1 | tee "$android_build_log"
+    info "flutter build apk ${build_variant} ${android_version_flags}"
+    flutter build apk ${build_variant} ${android_version_flags} 2>&1 | tee "$android_build_log"
     android_build_rc=${PIPESTATUS[0]}
     if [ "$android_build_rc" -ne 0 ]; then
       handle_android_build_failure "apk" "$android_build_rc" "$android_build_log" "$build_variant"
@@ -7377,28 +7386,33 @@ if $BUILD_ANDROID; then
   fi
 
   rm -f "$android_build_log"
-  ok "Android build muvaffaqiyatli (exit code 0)"
+  ok "Android build muvaffaqiyatli (exit code 0, versiya: ${new_pname}+${new_pbuild})"
 fi
 
 if $BUILD_IOS; then
   step "iOS build (${MODE_LABEL})"
   # v1.14.1 KRITIK FIX: iOS build ham exit code tekshirmasdan "muvaffaqiyatli"
   # derdi (false positive). Endi tekshiramiz.
+  # v1.17.5: versiyani flag orqali uzatamiz (pubspec/pbxproj'dan ustun)
   ios_build_rc=0
+  local ios_version_flags=""
+  if [ -n "$new_iversion" ] && [ -n "$new_ibuild" ]; then
+    ios_version_flags="--build-name=${new_iversion} --build-number=${new_ibuild}"
+  fi
   if $IS_PROD; then
     if $DO_APPSTORE_UPLOAD; then
-      info "flutter build ipa --release --export-options-plist ios/ExportOptions.plist"
-      flutter build ipa --release --export-options-plist ios/ExportOptions.plist
+      info "flutter build ipa --release ${ios_version_flags} --export-options-plist ios/ExportOptions.plist"
+      flutter build ipa --release ${ios_version_flags} --export-options-plist ios/ExportOptions.plist
       ios_build_rc=$?
     else
-      info "flutter build ipa --release"
-      flutter build ipa --release
+      info "flutter build ipa --release ${ios_version_flags}"
+      flutter build ipa --release ${ios_version_flags}
       ios_build_rc=$?
     fi
     BUILD_PATHS+=("$(pwd)/build/ios/ipa")
   else
-    info "flutter build ios --debug --no-codesign"
-    flutter build ios --debug --no-codesign
+    info "flutter build ios --debug --no-codesign ${ios_version_flags}"
+    flutter build ios --debug --no-codesign ${ios_version_flags}
     ios_build_rc=$?
     BUILD_PATHS+=("$(pwd)/build/ios/iphoneos")
   fi
