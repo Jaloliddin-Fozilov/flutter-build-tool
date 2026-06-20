@@ -22,7 +22,7 @@
 set -eo pipefail
 
 # ─── Skript ma'lumotlari ──────────────────────────────────
-SCRIPT_VERSION="1.17.5"
+SCRIPT_VERSION="1.17.6"
 SCRIPT_REPO="Jaloliddin-Fozilov/flutter-build-tool"
 SCRIPT_RAW_URL="https://raw.githubusercontent.com/${SCRIPT_REPO}/main/flutter_build.sh"
 
@@ -5005,6 +5005,68 @@ resolve_play_build_number() {
   return 0   # store'dan olindi
 }
 
+# v1.17.6: Commit 403 — Play POLICY/deklaratsiya xatosi (ruxsat emas).
+# Ilova ba'zi ruxsat/funksiyalar uchun Play Console'da deklaratsiya talab qiladi.
+# Bu API bilan hal qilinmaydi — Play Console UI'da to'ldiriladi.
+#
+# Args: commit_response package_name
+play_handle_commit_policy_403() {
+  local resp="$1" package="$2"
+
+  echo
+  err "${BOLD}Bu RUXSAT emas — Google Play POLICY/deklaratsiya talabi${NC}"
+  echo
+  info "Google'ning aniq xabari:"
+  # JSON'dan message'ni ajratib, o'qiladigan ko'rsatamiz
+  local msg
+  msg=$(echo "$resp" | grep -o '"message"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1 | sed -E 's/.*"message"[[:space:]]*:[[:space:]]*"([^"]*)".*/\1/')
+  [ -n "$msg" ] && info "  ${YELLOW}${msg}${NC}"
+  echo
+
+  # Qaysi deklaratsiya kerakligini aniqlaymiz
+  if echo "$resp" | grep -qiE "photo and video"; then
+    warn "${BOLD}Photo va Video ruxsatlari deklaratsiyasi kerak${NC}"
+    info "Ilovangiz rasm/video ruxsatlarini so'raydi (image_picker, image_cropper va h.k.)."
+    info "Google bu ruxsatlar NIMA UCHUN kerakligini deklaratsiya qilishni talab qiladi."
+    echo
+    info "${BOLD}Yechim — Play Console'da to'ldiring:${NC}"
+    info "  1. Play Console → ilovangizni oching"
+    info "  2. Chap menyu: ${BOLD}Policy → App content${NC} (yoki 'Dasturiy mazmun')"
+    info "  3. ${BOLD}'Photo and video permissions'${NC} bo'limini toping"
+    info "  4. 'Start' / 'Manage' bosing va so'rovlarni to'ldiring:"
+    info "     • Ilova nima uchun rasm/videoga kirishi kerakligini tushuntiring"
+    info "     • Yoki: agar kerak bo'lmasa, ruxsatlarni manifest'dan olib tashlang"
+    info "  5. Saqlang va 1-2 soat kuting (Google tekshiradi)"
+  elif echo "$resp" | grep -qiE "data safety"; then
+    warn "${BOLD}Data Safety (Ma'lumotlar xavfsizligi) deklaratsiyasi kerak${NC}"
+    info "Yechim: Play Console → Policy → App content → Data safety → to'ldiring"
+  elif echo "$resp" | grep -qiE "target api"; then
+    warn "${BOLD}Target API level talabi${NC}"
+    info "Yechim: android/app/build.gradle'da targetSdkVersion'ni oshiring (eng yangi)"
+  elif echo "$resp" | grep -qiE "advertising ID"; then
+    warn "${BOLD}Advertising ID deklaratsiyasi kerak${NC}"
+    info "Yechim: Play Console → Policy → App content → Advertising ID → to'ldiring"
+  elif echo "$resp" | grep -qiE "privacy policy"; then
+    warn "${BOLD}Maxfiylik siyosati (Privacy Policy) kerak${NC}"
+    info "Yechim: Play Console → Policy → App content → Privacy policy URL qo'shing"
+  else
+    warn "${BOLD}Play Console deklaratsiyasi to'ldirilmagan${NC}"
+    info "Yechim: Play Console → Policy → App content — barcha bo'limlarni to'ldiring"
+  fi
+
+  echo
+  step "Play Console App content sahifasi ochilmoqda..."
+  open_url "https://play.google.com/console/u/0/developers/-/app/${package}/app-content"
+  echo
+  info "${BOLD}MUHIM:${NC} deklaratsiyani to'ldirgach, AAB allaqachon yuklangan —"
+  info "qayta build kerak emas. Faqat qaytadan upload qiling:"
+  try_this \
+    "flutter-build   # → 3) Upload (build qilmasdan) → Android" \
+    "# yoki Play Console'da Pending changes'ni to'g'ridan-to'g'ri commit qiling"
+  echo
+  info "Ushbu deklaratsiya bir marta to'ldiriladi — keyingi upload'larda so'ralmaydi."
+}
+
 # v1.14.0: Bundle upload 403 handler — YANGI app uchun maxsus
 # Bundle upload bosqichida 403 ko'pincha "birinchi release qo'lda kerak" degani.
 # Google Play API yangi app'ning BIRINCHI versiyasini yuklay olmaydi.
@@ -5860,9 +5922,15 @@ upload_to_play_store() {
   if [ "$SPIN_RC" -ne 0 ] || { [ -n "$SPIN_HTTP" ] && [ "$SPIN_HTTP" -ge 400 ] 2>/dev/null; }; then
       err "Commit xato (HTTP ${SPIN_HTTP:-?}): $commit_response"
       echo
+      # v1.17.6: AVVAL Play POLICY/deklaratsiya xatosini tekshiramiz — bu
+      # ruxsat muammosi EMAS, Play Console'da to'ldiriladigan deklaratsiya.
+      # (photo/video permissions, data safety, target API, va h.k.)
+      if echo "$commit_response" | grep -qiE "tell Google Play|core functionality|declaration|photo and video|data safety|privacy policy|App content|must complete|advertising ID|target api"; then
+        play_handle_commit_policy_403 "$commit_response" "$package_name"
+        return 1
       # v1.13.0: HTTP code'ga ko'ra batafsil diagnostika
       # v1.13.2: 403 holatida interaktiv recovery menyusi (5 ta variant)
-      if [ "$SPIN_HTTP" = "403" ] || echo "$commit_response" | grep -qE "\"code\": *403|forbidden|Forbidden"; then
+      elif [ "$SPIN_HTTP" = "403" ] || echo "$commit_response" | grep -qE "\"code\": *403|forbidden|Forbidden"; then
         info "${BOLD}Sabab:${NC} Service Account 'Release Manager' ruxsatiga ega emas"
         info "(Edit yaratish va track qo'shish ishladi — demak ba'zi ruxsat'lar bor,"
         info " lekin commit qilish uchun ${BOLD}'Manage releases'${NC} ruxsati alohida kerak)"

@@ -5,6 +5,83 @@ Loyihaning barcha muhim o'zgarishlari shu faylga yoziladi.
 Format [Keep a Changelog](https://keepachangelog.com/uz/1.1.0/) asosida,
 versiyalash esa [Semantic Versioning](https://semver.org/lang/uz/) qoidasiga rioya qiladi.
 
+## [1.17.6] — 2026-06-09
+
+### Qo'shildi — Play POLICY/deklaratsiya 403 aniqlash (ruxsat emas)
+
+User 403 oldi, lekin bu **ruxsat muammosi EMAS**:
+
+```
+"message": "All developers requesting access to the photo and video
+permissions are required to tell Google Play about the core functionality
+of their app"
+```
+
+Bu **Google Play policy gate** — ilova rasm/video ruxsatlarini so'raydi
+(image_picker, image_cropper), va Google bu ruxsatlar nima uchun kerakligini
+**deklaratsiya** qilishni talab qiladi. Deklaratsiya to'ldirilmaguncha,
+**API ham, qo'lda submit ham** bloklanadi.
+
+### Muammo — noto'g'ri tashxis
+
+Avval har qanday commit 403 → "Service Account ruxsati yo'q" deb interaktiv
+permission recovery menyusi ko'rsatardi. Lekin bu policy xatosi uchun
+**noto'g'ri** — recovery menyu yordam bermaydi.
+
+### Fix — policy xatosini AVVAL aniqlash
+
+Commit 403 endi avval policy/deklaratsiya kalit so'zlarini tekshiradi:
+`tell Google Play`, `core functionality`, `photo and video`, `data safety`,
+`privacy policy`, `target api`, `advertising ID`, `App content`.
+
+Topilsa, aniq yo'l-yo'riq beriladi (permission menyu emas):
+
+```
+✗ Bu RUXSAT emas — Google Play POLICY/deklaratsiya talabi
+
+Google'ning aniq xabari:
+  All developers requesting access to the photo and video permissions...
+
+⚠ Photo va Video ruxsatlari deklaratsiyasi kerak
+Ilovangiz rasm/video ruxsatlarini so'raydi (image_picker, image_cropper).
+
+Yechim — Play Console'da to'ldiring:
+  1. Play Console → ilovangizni oching
+  2. Chap menyu: Policy → App content
+  3. 'Photo and video permissions' bo'limini toping
+  4. 'Start' / 'Manage' bosing va to'ldiring:
+     • Ilova nima uchun rasm/videoga kirishi kerakligini tushuntiring
+     • Yoki: kerak bo'lmasa, ruxsatlarni manifest'dan olib tashlang
+  5. Saqlang va 1-2 soat kuting
+
+[App content sahifasi avtomatik ochiladi]
+
+MUHIM: deklaratsiyani to'ldirgach, AAB yuklangan — qayta build kerak emas:
+  flutter-build → 3) Upload (build qilmasdan) → Android
+```
+
+### Boshqa policy turlari ham
+
+`play_handle_commit_policy_403` quyidagilarni ham aniqlaydi:
+- Data safety (Ma'lumotlar xavfsizligi)
+- Target API level
+- Advertising ID
+- Privacy policy
+- Umumiy App content
+
+Har biriga aniq yechim.
+
+### Texnik tafsilot
+
+**Policy gate vs auth gate**: Google Play API 403'ni 2 sababdan qaytaradi —
+(1) auth/permission (Service Account ruxsati), (2) policy/declaration
+(App content to'ldirilmagan). Ikkalasi bir xil HTTP kod, lekin **butunlay
+boshqa yechim**. Xabar matnini tahlil qilib ajratamiz — bu **error message
+parsing** patterni.
+
+**Bir marta to'ldiriladi**: policy deklaratsiyalar app-level, bir marta
+to'ldiriladi. Keyingi upload'larda so'ralmaydi.
+
 ## [1.17.5] — 2026-06-09
 
 ### 🔴 KRITIK FIX — versiya `flutter build` flag'lari orqali (har doim ishlaydi)
@@ -3509,6 +3586,7 @@ yangi yo'lni oladi (3 loyiha → 1 ta fayl tahriri).
 - AAB va APK formatlari, Production va Debug rejimlari.
 - Build natijalarini Finder'da avtomatik ochish.
 
+[1.17.6]: https://github.com/Jaloliddin-Fozilov/flutter-build-tool/releases/tag/v1.17.6
 [1.17.5]: https://github.com/Jaloliddin-Fozilov/flutter-build-tool/releases/tag/v1.17.5
 [1.17.4]: https://github.com/Jaloliddin-Fozilov/flutter-build-tool/releases/tag/v1.17.4
 [1.17.3]: https://github.com/Jaloliddin-Fozilov/flutter-build-tool/releases/tag/v1.17.3
