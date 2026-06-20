@@ -5,6 +5,77 @@ Loyihaning barcha muhim o'zgarishlari shu faylga yoziladi.
 Format [Keep a Changelog](https://keepachangelog.com/uz/1.1.0/) asosida,
 versiyalash esa [Semantic Versioning](https://semver.org/lang/uz/) qoidasiga rioya qiladi.
 
+## [1.17.7] — 2026-06-20
+
+### 🔴 KRITIK FIX — iOS build false positive + stale IPA upload
+
+User: "build bo'lmadi lekin appstorega yuklab yotibti".
+
+iOS IPA yaratish **muvaffaqiyatsiz** bo'ldi:
+```
+error: exportArchive No signing certificate "iOS Distribution" found
+error: exportArchive Unable to process request - PLA Update available
+Try distributing the app in Xcode
+  ✓ iOS build muvaffaqiyatli (exit code 0)   ← FALSE POSITIVE!
+```
+
+Skript "muvaffaqiyatli" dedi va **eski/stale IPA**'ni (oldingi build'dan)
+yuklashga urindi → 409 "build 44 allaqachon ishlatilgan" xatosi.
+
+### Sabab — `flutter build ipa` exit 0 qaytaradi (export fail bo'lsa ham)
+
+`flutter build ipa` archive'ni yaratadi, lekin IPA export (signing) muvaffaqiyatsiz
+bo'lsa ham **exit 0** qaytaradi ("Try distributing in Xcode" deydi). Exit code
+yetarli emas.
+
+### Fix 1 — output'dan export xatosini aniqlash
+
+iOS build endi (Android kabi) output'ni tee bilan ushlaydi va tekshiradi:
+`exportArchive`, `No signing certificate`, `PLA Update available`,
+`Provisioning profile`, `Failed to create IPA`. Exit 0 bo'lsa ham, bu
+pattern'lar topilsa — build muvaffaqiyatsiz hisoblanadi.
+
+### Fix 2 — stale IPA o'chiriladi
+
+Build'dan oldin eski `build/ios/ipa/*.ipa` o'chiriladi. Build muvaffaqiyatsiz
+bo'lsa, **eski IPA upload qilinmaydi**. Plus IPA fayl haqiqatan yaratilganini
+tekshiramiz.
+
+### Fix 3 — PLA / signing guidance
+
+Sizning asl muammongiz: **PLA Update available** — Apple Developer litsenziya
+shartnomasi yangilangan, qabul qilmaguningizcha distribution build bloklanadi:
+
+```
+✗ iOS IPA yaratilmadi (build muvaffaqiyatsiz)
+
+Sabab: Apple Developer litsenziya shartnomasi (PLA) yangilangan
+Apple shartnomani yangilaganda, yangi distribution build BLOKLANADI.
+
+Yechim — shartnomani qabul qiling:
+  1. https://developer.apple.com/account ga kiring
+  2. Sariq banner bo'lsa: 'Review Agreement' / 'Accept' bosing
+  3. https://appstoreconnect.apple.com — bu yerda ham banner bo'lishi mumkin
+  4. Account Holder (egasi) qabul qilishi kerak
+  5. Qabul qilingach, qaytadan urinib ko'ring
+
+[developer.apple.com sahifasi avtomatik ochiladi]
+```
+
+`handle_ios_build_failure` quyidagilarni aniqlaydi: PLA, signing certificate,
+provisioning profile, CocoaPods.
+
+### Texnik tafsilot
+
+**Exit code yolg'on gapirishi mumkin**: `flutter build ipa` archive OK, IPA
+export FAIL → exit 0. Bu **leaky abstraction** — ichki Xcode export xato'si
+tashqi exit code'ga to'g'ri tarjima qilinmaydi. Output parsing — yagona
+ishonchli usul.
+
+**Stale artifact xavfi**: build muvaffaqiyatsiz bo'lsa, eski artifact
+qolib ketadi va xato bilan upload qilinadi. Yechim: build'dan oldin tozalash
++ build'dan keyin freshlik tekshiruvi.
+
 ## [1.17.6] — 2026-06-09
 
 ### Qo'shildi — Play POLICY/deklaratsiya 403 aniqlash (ruxsat emas)
@@ -3586,6 +3657,7 @@ yangi yo'lni oladi (3 loyiha → 1 ta fayl tahriri).
 - AAB va APK formatlari, Production va Debug rejimlari.
 - Build natijalarini Finder'da avtomatik ochish.
 
+[1.17.7]: https://github.com/Jaloliddin-Fozilov/flutter-build-tool/releases/tag/v1.17.7
 [1.17.6]: https://github.com/Jaloliddin-Fozilov/flutter-build-tool/releases/tag/v1.17.6
 [1.17.5]: https://github.com/Jaloliddin-Fozilov/flutter-build-tool/releases/tag/v1.17.5
 [1.17.4]: https://github.com/Jaloliddin-Fozilov/flutter-build-tool/releases/tag/v1.17.4

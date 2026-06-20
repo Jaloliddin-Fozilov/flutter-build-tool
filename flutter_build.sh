@@ -22,7 +22,7 @@
 set -eo pipefail
 
 # ─── Skript ma'lumotlari ──────────────────────────────────
-SCRIPT_VERSION="1.17.6"
+SCRIPT_VERSION="1.17.7"
 SCRIPT_REPO="Jaloliddin-Fozilov/flutter-build-tool"
 SCRIPT_RAW_URL="https://raw.githubusercontent.com/${SCRIPT_REPO}/main/flutter_build.sh"
 
@@ -6771,6 +6771,74 @@ _ensure_proguard_playcore_rules() {
   return 0
 }
 
+# v1.17.7: iOS build/IPA export muvaffaqiyatsizligini tahlil qilish.
+# flutter build ipa ba'zan exit 0 qaytaradi, lekin IPA yaratilmaydi (signing).
+# Args: log_content (build output)
+handle_ios_build_failure() {
+  local log="$1"
+
+  echo
+  err "iOS IPA yaratilmadi (build muvaffaqiyatsiz)"
+  echo
+
+  # ─── PLA Update / litsenziya shartnomasi (ENG TEZ-TEZ) ───
+  if echo "$log" | grep -qiE "PLA Update available|Program License Agreement|review the current"; then
+    warn "${BOLD}Sabab: Apple Developer litsenziya shartnomasi (PLA) yangilangan${NC}"
+    info "Apple shartnomani yangilaganda, yangi distribution build BLOKLANADI"
+    info "(signing certificate'ga kirish to'xtatiladi)."
+    echo
+    info "${BOLD}Yechim — shartnomani qabul qiling:${NC}"
+    info "  1. ${BOLD}https://developer.apple.com/account${NC} ga kiring"
+    info "  2. Agar sariq banner bo'lsa: 'Review Agreement' / 'Accept' bosing"
+    info "  3. ${BOLD}https://appstoreconnect.apple.com${NC} — bu yerda ham banner bo'lishi mumkin"
+    info "  4. Account Holder (egasi) qabul qilishi kerak — agar siz developer bo'lsangiz,"
+    info "     egaga ayting (jaloliddinish@gmail.com egasimi tekshiring)"
+    info "  5. Qabul qilingach, qaytadan urinib ko'ring"
+    echo
+    step "Apple Developer sahifasi ochilmoqda..."
+    open_url "https://developer.apple.com/account"
+  # ─── No signing certificate ───
+  elif echo "$log" | grep -qiE "No signing certificate|No certificate|doesn't include any certificates"; then
+    warn "${BOLD}Sabab: iOS Distribution sertifikati topilmadi${NC}"
+    info "App Store uchun 'Apple Distribution' / 'iOS Distribution' sertifikat kerak."
+    echo
+    info "${BOLD}Yechim'lar:${NC}"
+    info "  1. ${BOLD}PLA shartnomasi${NC} (eng tez-tez): developer.apple.com'da qabul qiling"
+    info "     (shartnoma qabul qilinmasa, sertifikat ko'rinmaydi)"
+    info "  2. Xcode'da sertifikat yarating: Xcode → Settings → Accounts →"
+    info "     Manage Certificates → '+' → Apple Distribution"
+    info "  3. Yoki: Xcode'da loyihani ochib, Signing & Capabilities → 'Automatically"
+    info "     manage signing' yoqing va Team tanlang"
+    echo
+    info "Tekshirish:"
+    try_this \
+      "security find-identity -p codesigning -v   # mavjud sertifikatlarni ko'rish" \
+      "open ios/Runner.xcworkspace   # Xcode'da signing sozlash"
+  # ─── Provisioning profile ───
+  elif echo "$log" | grep -qiE "Provisioning profile|provisioning"; then
+    warn "${BOLD}Sabab: Provisioning profile muammosi${NC}"
+    info "Yechim: Xcode → loyihani oching → Signing & Capabilities → profil tanlang/yangilang"
+    try_this "open ios/Runner.xcworkspace"
+  # ─── CocoaPods ───
+  elif echo "$log" | grep -qiE "CocoaPods|pod install|pod repo"; then
+    warn "${BOLD}Sabab: CocoaPods muammosi${NC}"
+    try_this \
+      "cd ios && pod install --repo-update && cd ..   # pod'larni yangilash" \
+      "flutter clean && flutter pub get"
+  # ─── Umumiy ───
+  else
+    warn "${BOLD}Sabab aniq emas${NC} — yuqoridagi to'liq xato'ni ko'ring"
+    info "Tez-tez yordam beradi:"
+    try_this \
+      "open ios/Runner.xcworkspace   # Xcode'da Product → Archive → Distribute" \
+      "flutter clean && flutter pub get && cd ios && pod install && cd .."
+  fi
+
+  echo
+  info "${BOLD}MUHIM:${NC} IPA yaratilmadi — eski/stale IPA upload qilinmaydi (xavfsiz)"
+  return 1
+}
+
 # v1.14.1: Android build muvaffaqiyatsizligini tahlil qilish va imkon bo'lsa tuzatish
 # Args: build_type(appbundle/apk) exit_code log_file build_variant
 # Returns:
@@ -7463,37 +7531,59 @@ if $BUILD_IOS; then
   # derdi (false positive). Endi tekshiramiz.
   # v1.17.5: versiyani flag orqali uzatamiz (pubspec/pbxproj'dan ustun)
   ios_build_rc=0
-  local ios_version_flags=""
+  local ios_version_flags="" ios_build_log
   if [ -n "$new_iversion" ] && [ -n "$new_ibuild" ]; then
     ios_version_flags="--build-name=${new_iversion} --build-number=${new_ibuild}"
   fi
+  ios_build_log=$(mktemp 2>/dev/null || echo "/tmp/fb_ios_build.$$")
+
+  # v1.17.7 KRITIK FIX: eski/stale IPA'ni o'chiramiz — build muvaffaqiyatsiz
+  # bo'lsa, eski IPA upload qilinmasligi uchun. (Avval stale IPA yuklanardi!)
+  if $IS_PROD && $DO_APPSTORE_UPLOAD; then
+    rm -f build/ios/ipa/*.ipa 2>/dev/null || true
+  fi
+
   if $IS_PROD; then
     if $DO_APPSTORE_UPLOAD; then
       info "flutter build ipa --release ${ios_version_flags} --export-options-plist ios/ExportOptions.plist"
-      flutter build ipa --release ${ios_version_flags} --export-options-plist ios/ExportOptions.plist
-      ios_build_rc=$?
+      flutter build ipa --release ${ios_version_flags} --export-options-plist ios/ExportOptions.plist 2>&1 | tee "$ios_build_log"
+      ios_build_rc=${PIPESTATUS[0]}
     else
       info "flutter build ipa --release ${ios_version_flags}"
-      flutter build ipa --release ${ios_version_flags}
-      ios_build_rc=$?
+      flutter build ipa --release ${ios_version_flags} 2>&1 | tee "$ios_build_log"
+      ios_build_rc=${PIPESTATUS[0]}
     fi
     BUILD_PATHS+=("$(pwd)/build/ios/ipa")
   else
     info "flutter build ios --debug --no-codesign ${ios_version_flags}"
-    flutter build ios --debug --no-codesign ${ios_version_flags}
-    ios_build_rc=$?
+    flutter build ios --debug --no-codesign ${ios_version_flags} 2>&1 | tee "$ios_build_log"
+    ios_build_rc=${PIPESTATUS[0]}
     BUILD_PATHS+=("$(pwd)/build/ios/iphoneos")
   fi
-  if [ $ios_build_rc -ne 0 ]; then
-    err "iOS build muvaffaqiyatsiz (exit code: $ios_build_rc)"
-    info "Yuqoridagi xato xabarini ko'ring"
-    info "Tez-tez uchraydigan sabablar:"
-    info "  • CocoaPods muammosi: ${BOLD}cd ios && pod install && cd ..${NC}"
-    info "  • Signing: Xcode'da Team/Provisioning profil sozlang"
-    info "  • Clean kerak: ${BOLD}flutter clean && flutter pub get${NC}"
+
+  # v1.17.7: exit code 0 bo'lsa ham output'da export/signing xatosini tekshiramiz.
+  # flutter build ipa ba'zan IPA export muvaffaqiyatsiz bo'lsa ham exit 0 qaytaradi
+  # ("Try distributing in Xcode" deydi) — bu false positive.
+  local ios_log_content=""
+  [ -f "$ios_build_log" ] && ios_log_content=$(cat "$ios_build_log" 2>/dev/null)
+  local ios_export_failed=false
+  if echo "$ios_log_content" | grep -qiE "exportArchive|No signing certificate|Encountered error while creating the IPA|PLA Update available|Provisioning profile.*(not found|doesn't|expired)|Failed to create IPA"; then
+    ios_export_failed=true
+  fi
+  # Prod+upload: IPA fayl haqiqatan yaratilganini ham tekshiramiz
+  if $IS_PROD && $DO_APPSTORE_UPLOAD; then
+    if ! ls build/ios/ipa/*.ipa > /dev/null 2>&1; then
+      ios_export_failed=true
+    fi
+  fi
+
+  if [ "$ios_build_rc" -ne 0 ] || $ios_export_failed; then
+    rm -f "$ios_build_log"
+    handle_ios_build_failure "$ios_log_content"
     return 1 2>/dev/null || exit 1
   fi
-  ok "iOS build muvaffaqiyatli (exit code 0)"
+  rm -f "$ios_build_log"
+  ok "iOS build muvaffaqiyatli (IPA yaratildi, versiya: ${new_iversion}+${new_ibuild})"
 fi
 
 # ─── 9b. App Store Connect ga upload ──────────────────────
